@@ -124,7 +124,11 @@ export var MockFilePicker = {
     this.returnData = [];
 
     for (let file of files) {
-      if (ChromeUtils.getClassName(file) === "File") {
+      if (typeof file == "string") {
+        // A raw OS path; the nsIFile is created here so that sandboxed
+        // content callers do not have to construct chrome objects.
+        this.returnData.push({ nsIFile: new lazy.FileUtils.File(file) });
+      } else if (ChromeUtils.getClassName(file) === "File") {
         this.returnData.push({ domFile: file });
       } else {
         this.returnData.push({ nsIFile: file });

@@ -7,34 +7,16 @@
   <title>Local File System Access picker test</title>
 
   <script src="/tests/SimpleTest/SimpleTest.js"></script>
+  <script src="localFileSystemAccess_helpers.js"></script>
   <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
 
   <script type="text/javascript">
-    const MockFilePicker = SpecialPowers.MockFilePicker;
-
-    function armActivation() {
-      SpecialPowers.wrap(document).notifyUserGestureActivation();
-    }
-
-    async function rejectsWith(promise, name, message) {
-      try {
-        await promise;
-        ok(false, `${message}: should have rejected`);
-      } catch (e) {
-        is(e.name, name, `${message}: rejected with ${name}`);
-      }
-    }
-
     add_task(async function init() {
       ok("showOpenFilePicker" in window, "showOpenFilePicker exists");
       ok("showSaveFilePicker" in window, "showSaveFilePicker exists");
       ok("showDirectoryPicker" in window, "showDirectoryPicker exists");
 
-      MockFilePicker.init();
-
-      SimpleTest.registerCleanupFunction(() => {
-        MockFilePicker.cleanup();
-      });
+      await setupLocalFileSystemAccessTest();
     });
 
     add_task(async function test_no_activation_rejects() {
@@ -47,7 +29,10 @@
     });
 
     add_task(async function test_cancel_rejects_abort() {
-      await MockFilePicker.useAnyFile();
+      const path = joinPath(baseDir, "cancelme.txt");
+      await csWrite(path, "cancel");
+
+      MockFilePicker.setFiles([path]);
       MockFilePicker.returnValue = MockFilePicker.returnCancel;
 
       armActivation();
@@ -56,69 +41,63 @@
     });
 
     add_task(async function test_open_file_picker() {
-      const file = await MockFilePicker.useAnyFile();
-      MockFilePicker.returnValue = MockFilePicker.returnOK;
+      const path = joinPath(baseDir, "opened.txt");
+      await csWrite(path, "picker smoke content");
 
-      armActivation();
-      const handles = await window.showOpenFilePicker();
-      is(handles.length, 1, "one handle picked");
-
-      const handle = handles[0];
+      const handle = await pickFile(path);
       is(handle.kind, "file", "open picker returns a file handle");
-      is(handle.name, file.leafName, "handle name matches picked file");
+      is(handle.name, "opened.txt", "handle name matches picked file");
 
-      await rejectsWith(handle.getFile(), "UnknownError",
-                        "getFile is not implemented yet");
+      const file = await handle.getFile();
+      is(await file.text(), "picker smoke content",
+         "getFile reads the real file content");
 
       await rejectsWith(window.showOpenFilePicker(), "SecurityError",
                         "user activation is consumed per call");
     });
 
     add_task(async function test_save_file_picker() {
-      const file = await MockFilePicker.useAnyFile();
-      MockFilePicker.returnValue = MockFilePicker.returnReplace;
+      const path = joinPath(baseDir, "saved.txt");
+      await csWrite(path, "existing save content");
 
-      armActivation();
-      const handle = await window.showSaveFilePicker(
-        { suggestedName: "myfile.txt" });
+      const handle = await pickSaveFile(path, { suggestedName: "saved.txt" });
       is(handle.kind, "file", "save picker returns a file handle");
-      is(handle.name, file.leafName, "handle name matches picked file");
+      is(handle.name, "saved.txt", "handle name matches picked file");
+
+      is(await csRead(path), "existing save content",
+         "save pick does not truncate an existing file");
     });
 
     add_task(async function test_directory_picker() {
-      const tmpDir = SpecialPowers.Services.dirsvc.get("TmpD",
-        SpecialPowers.Ci.nsIFile);
-      MockFilePicker.useDirectory(tmpDir.path);
-      MockFilePicker.returnValue = MockFilePicker.returnOK;
+      const dirPath = joinPath(baseDir, "pickeddir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "seed.txt"), "seed");
 
-      armActivation();
-      const handle = await window.showDirectoryPicker();
-      is(handle.kind, "directory", "directory picker returns a directory handle");
-      is(handle.name, tmpDir.leafName, "handle name matches picked directory");
+      const handle = await pickDirectory(dirPath);
+      is(handle.kind, "directory",
+         "directory picker returns a directory handle");
+      is(handle.name, "pickeddir", "handle name matches picked directory");
 
-      await rejectsWith(handle.getFileHandle("sub.txt", { create: true }),
-                        "UnknownError", "getFileHandle is not implemented yet");
-      await rejectsWith(handle.getDirectoryHandle("sub"), "UnknownError",
-                        "getDirectoryHandle is not implemented yet");
-
-      let iterationError = null;
-      try {
-        for await (const entry of handle.values()) {
-          void entry;
-        }
-      } catch (e) {
-        iterationError = e;
+      const names = [];
+      for await (const name of handle.keys()) {
+        names.push(name);
       }
-      is(iterationError && iterationError.name, "UnknownError",
-         "iteration is not implemented yet");
+      ok(names.includes("seed.txt"), "iteration sees the seeded child");
+
+      const subFile = await handle.getFileHandle("sub.txt", { create: true });
+      is(subFile.kind, "file", "getFileHandle(create) resolves a file handle");
+      const subStat = await csStat(joinPath(dirPath, "sub.txt"));
+      ok(subStat.exists, "getFileHandle(create) created the file on disk");
+
+      await rejectsWith(handle.getDirectoryHandle("missing"), "NotFoundError",
+                        "getDirectoryHandle for a missing entry");
     });
 
     add_task(async function test_local_handle_refuses_clone() {
-      await MockFilePicker.useAnyFile();
-      MockFilePicker.returnValue = MockFilePicker.returnOK;
+      const path = joinPath(baseDir, "cloneme.txt");
+      await csWrite(path, "clone");
 
-      armActivation();
-      const [handle] = await window.showOpenFilePicker();
+      const handle = await pickFile(path);
 
       let cloneError = null;
       try {
