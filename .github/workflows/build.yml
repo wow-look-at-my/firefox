@@ -30,9 +30,19 @@ jobs:
           python3 --version
           xcodebuild -version
 
+      - name: Pin Rust
+        run: rustup toolchain install 1.96.0 --profile minimal && rustup default 1.96.0
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('taskcluster/kinds/toolchain/**') }}
+          restore-keys: |
+            mozbuild-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Bootstrap
         run: ./mach --no-interactive bootstrap --application-choice browser --no-system-changes
@@ -44,7 +54,7 @@ jobs:
         run: ./mach build
 
       - name: Package
-        run: ./mach package
+        run: for i in 1 2 3; do ./mach package && break; [ $i -eq 3 ] && exit 1; echo "mach package failed (attempt $i), retrying"; sleep 30; done
 
       - name: List dist
         run: ls -la obj-build/dist/
@@ -72,11 +82,12 @@ jobs:
             const sha256 = require('crypto').createHash('sha256').update(data).digest('hex');
             core.info(`Publishing ${dmgName} (${data.length} bytes, sha256 ${sha256}) to ${server} as ${project} ${targetOs}/${targetArch}, branch ${branch}`);
 
-            const token = await core.getIDToken(server);
+            let token = await core.getIDToken(server);
             core.setSecret(token);
 
             const api = async (method: string, urlPath: string, body?: Buffer | string, extra?: Record<string, string>) => {
               const headers: Record<string, string> = { Authorization: `Bearer ${token}`, ...(extra || {}) };
+              let refreshed = false;
               for (let attempt = 1; ; attempt++) {
                 let status = 0;
                 let text = '';
@@ -84,6 +95,13 @@ jobs:
                   const resp = await fetch(`${server}${urlPath}`, { method, headers, body });
                   status = resp.status;
                   text = await resp.text();
+                  if ((status === 401 || status === 403) && !refreshed) {
+                    refreshed = true;
+                    token = await core.getIDToken(server);
+                    core.setSecret(token);
+                    headers.Authorization = `Bearer ${token}`;
+                    continue;
+                  }
                   if (status < 500 && !(status === 404 && text.trim() === '')) return { status, text };
                 } catch (e) {
                   text = e instanceof Error ? e.message : String(e);
@@ -143,7 +161,10 @@ jobs:
 
             const pubResp = await api('POST', `/api/v1/projects/${project}/releases/${version}/publish`);
             if (pubResp.status !== 200) throw new Error(`publish failed (HTTP ${pubResp.status}): ${pubResp.text}`);
-            core.info(`Published: https://dl.pazer.build/${project}?branch=${encodeURIComponent(branch)}&os=${targetOs}&arch=${targetArch}`);
+            core.info(`Published. Download: curl -fL -o '${dmgName}' 'https://dl.pazer.build/${project}?branch=${encodeURIComponent(branch)}&os=${targetOs}&arch=${targetArch}'`);
 
       - name: Disk usage
-        run: df -h
+        if: always()
+        run: |
+          df -h
+          sysctl vm.swapusage
