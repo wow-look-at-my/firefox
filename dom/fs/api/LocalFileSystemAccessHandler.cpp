@@ -15,6 +15,7 @@
 #include "mozilla/dom/FileSystemManager.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/StorageManager.h"
+#include "fs/FileSystemRequestHandler.h"
 #include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
 #include "nsGlobalWindowInner.h"
@@ -146,6 +147,35 @@ NS_IMETHODIMP LocalFileSystemPickerCallback::Done(
     return NS_OK;
   }
 
+  if (mKind == PickerKind::Save) {
+    // The parent is the minting authority for the save case: the round trip
+    // creates the picked file on disk (0 bytes) when it is missing and leaves
+    // existing content untouched.
+    nsCOMPtr<nsIFile> parentDir;
+    nsAutoString leafName;
+    nsAutoString parentPath;
+    if (NS_WARN_IF(NS_FAILED(file->GetParent(getter_AddRefs(parentDir)))) ||
+        NS_WARN_IF(!parentDir) ||
+        NS_WARN_IF(NS_FAILED(file->GetLeafName(leafName))) ||
+        NS_WARN_IF(NS_FAILED(parentDir->GetPath(parentPath))) ||
+        NS_WARN_IF(parentPath.IsEmpty())) {
+      mPromise->MaybeRejectWithUnknownError(
+          "Failed to resolve the save target.");
+      return NS_OK;
+    }
+
+    IgnoredErrorResult rv;
+    FileSystemRequestHandler{}.GetFileHandle(
+        manager,
+        FileSystemChildMetadata(NS_ConvertUTF16toUTF8(parentPath), leafName),
+        /* aCreate */ true, mPromise, rv);
+    if (NS_WARN_IF(rv.Failed())) {
+      mPromise->MaybeRejectWithUnknownError(
+          "Failed to request the save target.");
+    }
+    return NS_OK;
+  }
+
   RefPtr<FileSystemFileHandle> handle = MintHandle<FileSystemFileHandle>(
       global, manager, file, /* aDirectory */ false);
   if (NS_WARN_IF(!handle)) {
@@ -153,14 +183,11 @@ NS_IMETHODIMP LocalFileSystemPickerCallback::Done(
     return NS_OK;
   }
 
-  if (mKind == PickerKind::Open) {
-    nsTArray<RefPtr<FileSystemFileHandle>> handles;
-    handles.AppendElement(std::move(handle));
-    mPromise->MaybeResolve(handles);
-    return NS_OK;
-  }
+  MOZ_ASSERT(mKind == PickerKind::Open);
 
-  mPromise->MaybeResolve(handle);
+  nsTArray<RefPtr<FileSystemFileHandle>> handles;
+  handles.AppendElement(std::move(handle));
+  mPromise->MaybeResolve(handles);
   return NS_OK;
 }
 

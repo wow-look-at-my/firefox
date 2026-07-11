@@ -19,7 +19,9 @@
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
 #include "nsNetCID.h"
+#include "nsReadableUtils.h"
 #include "nsServiceManagerUtils.h"
+#include "nsString.h"
 #include "nsThreadUtils.h"
 #include "nsXPCOM.h"
 
@@ -30,6 +32,63 @@ namespace {
 StaticRefPtr<FileSystemLocalService> gFileSystemLocalService;
 
 }  // namespace
+
+// static
+FileSystemLocalLockTable& FileSystemLocalLockTable::Get() {
+  // Deliberately leaked; the table is accessed from IO task queues which may
+  // outlive static destructors.
+  static FileSystemLocalLockTable* sLockTable = new FileSystemLocalLockTable();
+  return *sLockTable;
+}
+
+FileSystemLocalLockTable::FileSystemLocalLockTable()
+    : mMutex("FileSystemLocalLockTable") {}
+
+bool FileSystemLocalLockTable::LockShared(const nsCString& aPath) {
+  MutexAutoLock lock(mMutex);
+
+  if (mExclusive.Contains(aPath)) {
+    return false;
+  }
+
+  mShared.LookupOrInsert(aPath, 0) += 1;
+  return true;
+}
+
+void FileSystemLocalLockTable::UnlockShared(const nsCString& aPath) {
+  MutexAutoLock lock(mMutex);
+
+  if (auto entry = mShared.Lookup(aPath)) {
+    MOZ_ASSERT(entry.Data() > 0);
+    if (--entry.Data() == 0) {
+      entry.Remove();
+    }
+  }
+}
+
+bool FileSystemLocalLockTable::IsAnyLockedUnder(const nsCString& aPath) {
+  MutexAutoLock lock(mMutex);
+
+  auto isUnder = [&aPath](const nsACString& aLocked) {
+    return StringBeginsWith(aLocked, aPath) &&
+           (aLocked.Length() == aPath.Length() ||
+            aLocked.CharAt(aPath.Length()) == kLocalPathSeparatorChar);
+  };
+
+  for (const auto& locked : mExclusive) {
+    if (isUnder(locked)) {
+      return true;
+    }
+  }
+
+  for (const auto& locked : mShared.Keys()) {
+    if (isUnder(locked)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 class FileSystemLocalService::ShutdownObserver final : public nsIObserver {
  public:

@@ -7,8 +7,11 @@
 
 #include <functional>
 
+#include "mozilla/Mutex.h"
 #include "nsCOMPtr.h"
+#include "nsHashKeys.h"
 #include "nsISupportsImpl.h"
+#include "nsTHashMap.h"
 #include "nsTHashSet.h"
 
 enum class nsresult : uint32_t;
@@ -27,6 +30,36 @@ namespace mozilla::dom {
 
 class FileSystemLocalManagerParent;
 class PFileSystemManagerParent;
+
+#ifdef XP_WIN
+constexpr char kLocalPathSeparatorChar = '\\';
+#else
+constexpr char kLocalPathSeparatorChar = '/';
+#endif
+
+// Process-wide table of the absolute paths currently opened by local writable
+// file streams. Local actors of any origin share it because the keys are real
+// OS paths. The exclusive arm is reserved for future access handle support.
+class FileSystemLocalLockTable final {
+ public:
+  static FileSystemLocalLockTable& Get();
+
+  bool LockShared(const nsCString& aPath);
+
+  void UnlockShared(const nsCString& aPath);
+
+  // True when aPath itself or any path under it holds any lock.
+  bool IsAnyLockedUnder(const nsCString& aPath);
+
+ private:
+  FileSystemLocalLockTable();
+
+  Mutex mMutex;
+
+  nsTHashSet<nsCString> mExclusive MOZ_GUARDED_BY(mMutex);
+
+  nsTHashMap<nsCStringHashKey, uint32_t> mShared MOZ_GUARDED_BY(mMutex);
+};
 
 // PBackground-affine registry of the live local file system actors. The first
 // registration installs an xpcom-shutdown observer which requests all
