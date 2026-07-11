@@ -1,0 +1,323 @@
+<!--
+  Any copyright is dedicated to the Public Domain.
+  http://creativecommons.org/publicdomain/zero/1.0/
+-->
+<html>
+<head>
+  <title>Local File System Access serialization and persistence test</title>
+
+  <script src="/tests/SimpleTest/SimpleTest.js"></script>
+  <script src="localFileSystemAccess_helpers.js"></script>
+  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
+
+  <script type="text/javascript">
+    function openDB(name) {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(name, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("handles");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function idbPut(db, key, value) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("handles", "readwrite");
+        tx.objectStore("handles").put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    function idbGet(db, key) {
+      return new Promise((resolve, reject) => {
+        const req = db.transaction("handles").objectStore("handles").get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function collectKeys(dirHandle) {
+      const names = [];
+      for await (const name of dirHandle.keys()) {
+        names.push(name);
+      }
+      return names.sort();
+    }
+
+    add_task(async function init() {
+      await setupLocalFileSystemAccessTest();
+    });
+
+    add_task(async function test_structuredClone_roundtrip() {
+      const filePath = joinPath(baseDir, "clone-me.txt");
+      await csWrite(filePath, "clone content");
+      const dirPath = joinPath(baseDir, "clone-dir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "inner.txt"), "inner");
+
+      const fileHandle = await pickFile(filePath);
+      const dirHandle = await pickDirectory(dirPath);
+
+      const fileClone = structuredClone(fileHandle);
+      is(fileClone.kind, "file", "cloned file handle kind");
+      is(fileClone.name, "clone-me.txt", "cloned file handle name");
+      ok(await fileClone.isSameEntry(fileHandle),
+         "clone is the same entry as the original");
+      is(await (await fileClone.getFile()).text(), "clone content",
+         "cloned file handle reads from disk");
+
+      const dirClone = structuredClone(dirHandle);
+      is(dirClone.kind, "directory", "cloned directory handle kind");
+      is(dirClone.name, "clone-dir", "cloned directory handle name");
+      isDeeply(await collectKeys(dirClone), ["inner.txt"],
+               "cloned directory handle iterates the real directory");
+
+      const inner = await dirClone.getFileHandle("inner.txt");
+      is(await (await inner.getFile()).text(), "inner",
+         "file obtained from cloned directory handle reads from disk");
+    });
+
+    add_task(async function test_postMessage_self() {
+      const filePath = joinPath(baseDir, "postmsg-self.txt");
+      await csWrite(filePath, "self message");
+      const dirPath = joinPath(baseDir, "postmsg-self-dir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "entry.txt"), "entry");
+
+      const fileHandle = await pickFile(filePath);
+      const dirHandle = await pickDirectory(dirPath);
+
+      const received = new Promise(resolve => {
+        window.addEventListener("message", e => resolve(e.data),
+                                { once: true });
+      });
+      window.postMessage({ file: fileHandle, dir: dirHandle }, "*");
+      const data = await received;
+
+      is(data.file.kind, "file", "posted file handle kind");
+      is(await (await data.file.getFile()).text(), "self message",
+         "posted file handle reads from disk");
+      is(data.dir.kind, "directory", "posted directory handle kind");
+      isDeeply(await collectKeys(data.dir), ["entry.txt"],
+               "posted directory handle iterates");
+    });
+
+    add_task(async function test_postMessage_iframe() {
+      const filePath = joinPath(baseDir, "postmsg-iframe.txt");
+      await csWrite(filePath, "iframe message");
+      const dirPath = joinPath(baseDir, "postmsg-iframe-dir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "frame-entry.txt"), "frame entry");
+
+      const fileHandle = await pickFile(filePath);
+      const dirHandle = await pickDirectory(dirPath);
+
+      const iframe = document.createElement("iframe");
+      document.body.appendChild(iframe);
+
+      const received = new Promise(resolve => {
+        iframe.contentWindow.addEventListener(
+          "message", e => resolve(e.data), { once: true });
+      });
+      iframe.contentWindow.postMessage(
+        { file: fileHandle, dir: dirHandle }, "*");
+      const data = await received;
+
+      is(data.file.name, "postmsg-iframe.txt",
+         "iframe-received file handle name");
+      is(await (await data.file.getFile()).text(), "iframe message",
+         "iframe-received file handle reads from disk");
+      isDeeply(await collectKeys(data.dir), ["frame-entry.txt"],
+               "iframe-received directory handle iterates");
+
+      const writable = await data.file.createWritable();
+      await writable.write("iframe wrote this");
+      await writable.close();
+      is(await csRead(filePath), "iframe wrote this",
+         "iframe-received handle writes to the real file");
+
+      iframe.remove();
+    });
+
+    add_task(async function test_broadcastChannel_roundtrip() {
+      const filePath = joinPath(baseDir, "broadcast.txt");
+      await csWrite(filePath, "broadcast content");
+
+      const fileHandle = await pickFile(filePath);
+
+      const sender = new BroadcastChannel("lfsa-handles");
+      const receiver = new BroadcastChannel("lfsa-handles");
+      const received = new Promise(resolve => {
+        receiver.addEventListener("message", e => resolve(e.data),
+                                  { once: true });
+      });
+      sender.postMessage(fileHandle);
+      const handle = await received;
+
+      is(handle.name, "broadcast.txt", "broadcast handle name");
+      is(await (await handle.getFile()).text(), "broadcast content",
+         "broadcast handle reads from disk");
+
+      sender.close();
+      receiver.close();
+    });
+
+    add_task(async function test_indexedDB_roundtrip() {
+      const filePath = joinPath(baseDir, "idb-file.txt");
+      await csWrite(filePath, "idb version one");
+      const dirPath = joinPath(baseDir, "idb-dir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "before-store.txt"), "before");
+
+      const fileHandle = await pickFile(filePath);
+      const dirHandle = await pickDirectory(dirPath);
+
+      const db = await openDB("lfsa-persistence");
+      await idbPut(db, "file", fileHandle);
+      await idbPut(db, "dir", dirHandle);
+
+      // Mutate the real file system between store and read to prove the
+      // retrieved handles are not stale snapshots.
+      await csWrite(filePath, "idb version two");
+      await csWrite(joinPath(dirPath, "after-store.txt"), "after");
+
+      const storedFile = await idbGet(db, "file");
+      const storedDir = await idbGet(db, "dir");
+
+      ok(storedFile instanceof FileSystemFileHandle,
+         "IDB returns a FileSystemFileHandle");
+      ok(storedDir instanceof FileSystemDirectoryHandle,
+         "IDB returns a FileSystemDirectoryHandle");
+      is(storedFile.name, "idb-file.txt", "IDB file handle name");
+      ok(await storedFile.isSameEntry(fileHandle),
+         "IDB file handle is the same entry");
+
+      is(await (await storedFile.getFile()).text(), "idb version two",
+         "IDB file handle observes out-of-band modification");
+      isDeeply(await collectKeys(storedDir),
+               ["after-store.txt", "before-store.txt"],
+               "IDB directory handle sees entries created after storing");
+
+      const writable = await storedFile.createWritable();
+      await writable.write("idb wrote this");
+      await writable.close();
+      is(await csRead(filePath), "idb wrote this",
+         "IDB file handle writes to the real file");
+
+      const child = await storedDir.getFileHandle("idb-created.txt",
+                                                  { create: true });
+      is(child.name, "idb-created.txt", "IDB dir handle creates children");
+      is((await csStat(joinPath(dirPath, "idb-created.txt"))).exists, true,
+         "child created through IDB dir handle exists on disk");
+
+      db.close();
+    });
+
+    add_task(async function test_permissions() {
+      const filePath = joinPath(baseDir, "perm.txt");
+      await csWrite(filePath, "perm");
+      const dirPath = joinPath(baseDir, "perm-dir");
+      await csMakeDir(dirPath);
+
+      const fileHandle = await pickFile(filePath);
+      const dirHandle = await pickDirectory(dirPath);
+
+      const db = await openDB("lfsa-permissions");
+      await idbPut(db, "file", fileHandle);
+      const storedFile = await idbGet(db, "file");
+      db.close();
+
+      for (const [label, handle] of [["picked file", fileHandle],
+                                     ["picked directory", dirHandle],
+                                     ["IDB file", storedFile]]) {
+        is(await handle.queryPermission(), "granted",
+           `${label}: queryPermission() default`);
+        is(await handle.queryPermission({ mode: "read" }), "granted",
+           `${label}: queryPermission read`);
+        is(await handle.queryPermission({ mode: "readwrite" }), "granted",
+           `${label}: queryPermission readwrite`);
+        is(await handle.requestPermission(), "granted",
+           `${label}: requestPermission() default`);
+        is(await handle.requestPermission({ mode: "read" }), "granted",
+           `${label}: requestPermission read`);
+        is(await handle.requestPermission({ mode: "readwrite" }), "granted",
+           `${label}: requestPermission readwrite`);
+      }
+
+      await rejectsWith(fileHandle.queryPermission({ mode: "bogus" }),
+                        "TypeError", "invalid permission mode");
+    });
+
+    add_task(async function test_opfs_clone_regression() {
+      const opfsRoot = await navigator.storage.getDirectory();
+      const opfsFile = await opfsRoot.getFileHandle("opfs-regression.txt",
+                                                    { create: true });
+      const w = await opfsFile.createWritable();
+      await w.write("opfs data");
+      await w.close();
+
+      const rootClone = structuredClone(opfsRoot);
+      is(rootClone.kind, "directory", "cloned OPFS root kind");
+      ok(await rootClone.isSameEntry(opfsRoot),
+         "cloned OPFS root is the same entry");
+
+      const fileClone = structuredClone(opfsFile);
+      is(await (await fileClone.getFile()).text(), "opfs data",
+         "cloned OPFS file handle still works");
+
+      is(await opfsFile.queryPermission({ mode: "readwrite" }), "granted",
+         "OPFS handles auto-grant permissions too");
+
+      await opfsRoot.removeEntry("opfs-regression.txt");
+    });
+
+    add_task(async function test_worker_clone_and_sync_access_rejects() {
+      const filePath = joinPath(baseDir, "worker.txt");
+      await csWrite(filePath, "worker content");
+
+      const fileHandle = await pickFile(filePath);
+
+      const workerCode = `
+        onmessage = async e => {
+          const handle = e.data;
+          try {
+            const text = await (await handle.getFile()).text();
+            let syncAccessError = "did-not-reject";
+            try {
+              await handle.createSyncAccessHandle();
+            } catch (err) {
+              syncAccessError = err.name;
+            }
+            postMessage({ ok: true, kind: handle.kind, name: handle.name,
+                          text, syncAccessError });
+          } catch (err) {
+            postMessage({ ok: false, error: err.name + ": " + err.message });
+          }
+        };
+      `;
+      const workerUrl = URL.createObjectURL(
+        new Blob([workerCode], { type: "application/javascript" }));
+      const worker = new Worker(workerUrl);
+
+      const result = await new Promise(resolve => {
+        worker.onmessage = e => resolve(e.data);
+        worker.postMessage(fileHandle);
+      });
+
+      ok(result.ok, `worker deserialized the handle: ${result.error || "ok"}`);
+      is(result.kind, "file", "worker-received handle kind");
+      is(result.name, "worker.txt", "worker-received handle name");
+      is(result.text, "worker content", "worker-received handle reads disk");
+      is(result.syncAccessError, "NotAllowedError",
+         "createSyncAccessHandle rejects with NotAllowedError in a worker");
+
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+    });
+  </script>
+</head>
+
+<body>
+</body>
+</html>

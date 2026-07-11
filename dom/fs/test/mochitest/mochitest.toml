@@ -52,6 +52,12 @@ skip-if = [
   "os == 'android'", # dom.fs.local.enabled is desktop-only
 ]
 
+["test_localFileSystemAccess_persistence.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
+
 ["test_localFileSystemAccess_picker.html"]
 scheme = "https"
 skip-if = [

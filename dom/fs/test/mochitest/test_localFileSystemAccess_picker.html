@@ -93,20 +93,17 @@
                         "getDirectoryHandle for a missing entry");
     });
 
-    add_task(async function test_local_handle_refuses_clone() {
+    add_task(async function test_local_handle_clones() {
       const path = joinPath(baseDir, "cloneme.txt");
       await csWrite(path, "clone");
 
       const handle = await pickFile(path);
 
-      let cloneError = null;
-      try {
-        structuredClone(handle);
-      } catch (e) {
-        cloneError = e;
-      }
-      is(cloneError && cloneError.name, "DataCloneError",
-         "local handles refuse structured cloning");
+      const clone = structuredClone(handle);
+      ok(await clone.isSameEntry(handle),
+         "local handles support structured cloning");
+      is(await (await clone.getFile()).text(), "clone",
+         "cloned local handle reads from disk");
     });
   </script>
 </head>
