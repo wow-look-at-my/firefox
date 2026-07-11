@@ -11,7 +11,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TaskQueue.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/FileSystemLog.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/Endpoint.h"
@@ -57,7 +56,7 @@ NS_IMETHODIMP FileSystemLocalService::ShutdownObserver::Observe(
     obs->RemoveObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID);
   }
 
-  Unused << mBackgroundTarget->Dispatch(NS_NewRunnableFunction(
+  (void)mBackgroundTarget->Dispatch(NS_NewRunnableFunction(
       "FileSystemLocalService::ShutdownObserver::Observe", []() {
         if (RefPtr<FileSystemLocalService> service =
                 gFileSystemLocalService.forget()) {
