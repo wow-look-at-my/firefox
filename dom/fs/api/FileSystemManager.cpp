@@ -18,16 +18,20 @@ namespace mozilla::dom {
 
 FileSystemManager::FileSystemManager(
     nsIGlobalObject* aGlobal, RefPtr<StorageManager> aStorageManager,
-    RefPtr<FileSystemBackgroundRequestHandler> aBackgroundRequestHandler)
+    RefPtr<FileSystemBackgroundRequestHandler> aBackgroundRequestHandler,
+    bool aLocal)
     : mGlobal(aGlobal),
       mStorageManager(std::move(aStorageManager)),
       mBackgroundRequestHandler(std::move(aBackgroundRequestHandler)),
-      mRequestHandler(new fs::FileSystemRequestHandler()) {}
+      mRequestHandler(new fs::FileSystemRequestHandler()),
+      mLocal(aLocal) {}
 
 FileSystemManager::FileSystemManager(nsIGlobalObject* aGlobal,
-                                     RefPtr<StorageManager> aStorageManager)
+                                     RefPtr<StorageManager> aStorageManager,
+                                     bool aLocal)
     : FileSystemManager(aGlobal, std::move(aStorageManager),
-                        MakeRefPtr<FileSystemBackgroundRequestHandler>()) {}
+                        MakeRefPtr<FileSystemBackgroundRequestHandler>(),
+                        aLocal) {}
 
 FileSystemManager::~FileSystemManager() { MOZ_ASSERT(mShutdown); }
 
@@ -131,7 +135,7 @@ void FileSystemManager::BeginRequest(
   QM_TRY_INSPECT(const auto& principalInfo, mGlobal->GetStorageKey(), QM_VOID,
                  [&aFailure](nsresult rv) { aFailure(rv); });
 
-  mBackgroundRequestHandler->CreateFileSystemManagerChild(principalInfo)
+  mBackgroundRequestHandler->CreateFileSystemManagerChild(principalInfo, mLocal)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [self = RefPtr<FileSystemManager>(this), holder,
@@ -150,6 +154,7 @@ void FileSystemManager::BeginRequest(
 }
 
 already_AddRefed<Promise> FileSystemManager::GetDirectory(ErrorResult& aError) {
+  MOZ_ASSERT(!mLocal);
   MOZ_ASSERT(mGlobal);
 
   RefPtr<Promise> promise = Promise::Create(mGlobal, aError);

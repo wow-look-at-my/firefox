@@ -170,6 +170,7 @@ MockFilePickerInstance.prototype = {
   filterIndex: 0,
   displayDirectory: null,
   displaySpecialDirectory: "",
+  rawPathResults: false,
   get file() {
     if (MockFilePicker.returnData.length >= 1) {
       return MockFilePicker.returnData[0].nsIFile;

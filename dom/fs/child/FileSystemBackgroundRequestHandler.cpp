@@ -69,7 +69,7 @@ FileSystemBackgroundRequestHandler::FileSystemManagerChildStrongRef() const {
 
 RefPtr<FileSystemManagerChild::ActorPromise>
 FileSystemBackgroundRequestHandler::CreateFileSystemManagerChild(
-    const mozilla::ipc::PrincipalInfo& aPrincipalInfo) {
+    const mozilla::ipc::PrincipalInfo& aPrincipalInfo, bool aLocal) {
   MOZ_ASSERT(!mFileSystemManagerChild);
   MOZ_ASSERT(!mShutdown);
 
@@ -113,7 +113,7 @@ FileSystemBackgroundRequestHandler::CreateFileSystemManagerChild(
 
     backgroundChild
         ->SendCreateFileSystemManagerParent(aPrincipalInfo,
-                                            std::move(parentEndpoint))
+                                            std::move(parentEndpoint), aLocal)
         ->Then(
             GetCurrentSerialEventTarget(), __func__,
             [self = RefPtr<FileSystemBackgroundRequestHandler>(this),

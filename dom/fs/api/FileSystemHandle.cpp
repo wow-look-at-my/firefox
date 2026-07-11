@@ -233,6 +233,13 @@ already_AddRefed<FileSystemHandle> FileSystemHandle::ReadStructuredClone(
 bool FileSystemHandle::WriteStructuredClone(
     JSContext* aCx, JSStructuredCloneWriter* aWriter) const {
   LOG_VERBOSE(("Writing File/DirectoryHandle"));
+
+  // TODO: Serialization of local handles requires a length-prefixed format
+  // for the variable-length EntryId (the absolute OS path).
+  if (mManager->IsLocal()) {
+    return false;
+  }
+
   MOZ_ASSERT(mMetadata.entryId().Length() == 32);
 
   auto kind = static_cast<uint32_t>(Kind());

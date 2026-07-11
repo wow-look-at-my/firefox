@@ -207,6 +207,13 @@ interface nsIFilePicker : nsISupports
   attribute boolean addToRecentDocs;
 
  /**
+  * When true, results are returned as raw OS paths (file/files attributes)
+  * and no DOM File/Directory objects are materialized. In save mode,
+  * returnReplace is treated as success. Defaults to false.
+  */
+  attribute boolean rawPathResults;
+
+ /**
   * Opens the file dialog asynchrounously.
   * The passed in object's done method will be called upon completion.
   */

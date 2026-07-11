@@ -38,6 +38,12 @@ scheme = "https"
 ["test_iframes.html"]
 scheme = "https"
 
+["test_localFileSystemAccess_picker.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
+
 ["test_syncAccessHandle_worker.html"]
 scheme = "https"
 

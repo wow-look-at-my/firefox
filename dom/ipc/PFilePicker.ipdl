@@ -20,10 +20,12 @@ struct InputDirectory {
   nsString directoryPath;
   IPCBlob[] blobsInWebKitDirectory;
 };
+struct InputPaths { nsString[] paths; };
 union MaybeInputData
 {
   InputBlobs;
   InputDirectory;
+  InputPaths;
   void_t;
 };
 
@@ -37,7 +39,7 @@ parent:
                nsString defaultExtension, nsString[] filters, nsString[] filterNames,
                nsString[] rawFilters, nsString displayDirectory,
                nsString displaySpecialDirectory, nsString okButtonLabel,
-               CaptureTarget capture);
+               CaptureTarget capture, bool rawPathResults);
 
 child:
     async __delete__(MaybeInputData data, ResultCode result);

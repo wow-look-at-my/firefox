@@ -35,7 +35,7 @@ mozilla::ipc::IPCResult CreateFileSystemManagerParent(
     const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
     mozilla::ipc::Endpoint<mozilla::dom::PFileSystemManagerParent>&&
         aParentEndpoint,
-    std::function<void(const nsresult&)>&& aResolver);
+    bool aLocal, std::function<void(const nsresult&)>&& aResolver);
 
 }  // namespace dom
 }  // namespace mozilla

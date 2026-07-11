@@ -51,7 +51,8 @@ class FilePickerParent : public PFilePickerParent {
       nsTArray<nsString>&& aFilters, nsTArray<nsString>&& aFilterNames,
       nsTArray<nsString>&& aRawFilters, const nsString& aDisplayDirectory,
       const nsString& aDisplaySpecialDirectory, const nsString& aOkButtonLabel,
-      const nsIFilePicker::CaptureTarget& aCapture);
+      const nsIFilePicker::CaptureTarget& aCapture,
+      const bool& aRawPathResults);
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -101,6 +102,7 @@ class FilePickerParent : public PFilePickerParent {
   nsIFilePicker::Mode mMode;
   RefPtr<mozilla::dom::BrowsingContext> mBrowsingContext;
   nsIFilePicker::ResultCode mResult;
+  bool mRawPathResults = false;
 };
 
 }  // namespace mozilla::dom
