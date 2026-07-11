@@ -385,9 +385,8 @@ IPCResult FileSystemLocalManagerParent::RecvGetWritable(
     return IPC_OK();
   }
 
-  auto autoUnlock = MakeScopeExit([&targetId] {
-    FileSystemLocalLockTable::Get().UnlockShared(targetId);
-  });
+  auto autoUnlock = MakeScopeExit(
+      [&targetId] { FileSystemLocalLockTable::Get().UnlockShared(targetId); });
 
   nsAutoString targetLeaf;
   rv = target->GetLeafName(targetLeaf);
@@ -514,8 +513,8 @@ IPCResult FileSystemLocalManagerParent::RecvGetFile(
   fs::Path path;
   path.AppendElement(leafName);
 
-  aResolver(FileSystemGetFileResponse(FileSystemFileProperties(
-      lastModifiedMilliSeconds, ipcBlob, type, path)));
+  aResolver(FileSystemGetFileResponse(
+      FileSystemFileProperties(lastModifiedMilliSeconds, ipcBlob, type, path)));
 
   return IPC_OK();
 }
@@ -754,9 +753,8 @@ void FileSystemLocalManagerParent::OnWritableStreamClosed(
   AssertIsOnIOTarget();
   MOZ_ASSERT(!aIsExclusive);
 
-  auto autoUnlock = MakeScopeExit([&aEntryId] {
-    FileSystemLocalLockTable::Get().UnlockShared(aEntryId);
-  });
+  auto autoUnlock = MakeScopeExit(
+      [&aEntryId] { FileSystemLocalLockTable::Get().UnlockShared(aEntryId); });
 
   auto swapOrErr = ResolveLocalFile(fs::EntryId(aTemporaryFileId.Value()));
   if (NS_WARN_IF(swapOrErr.isErr())) {
@@ -814,19 +812,19 @@ void FileSystemLocalManagerParent::RequestAllowToClose() {
 void FileSystemLocalManagerParent::ActorDestroy(ActorDestroyReason aWhy) {
   AssertIsOnIOTarget();
 
-  InvokeAsync(mBackgroundTarget, __func__,
-              [self = RefPtr<FileSystemLocalManagerParent>(this)]() {
-                self->mClosed = true;
+  InvokeAsync(
+      mBackgroundTarget, __func__,
+      [self = RefPtr<FileSystemLocalManagerParent>(this)]() {
+        self->mClosed = true;
 
-                if (FileSystemLocalService* service =
-                        FileSystemLocalService::Get()) {
-                  service->Unregister(self);
-                }
+        if (FileSystemLocalService* service = FileSystemLocalService::Get()) {
+          service->Unregister(self);
+        }
 
-                self->mTaskQueue->BeginShutdown();
+        self->mTaskQueue->BeginShutdown();
 
-                return BoolPromise::CreateAndResolve(true, __func__);
-              });
+        return BoolPromise::CreateAndResolve(true, __func__);
+      });
 }
 
 }  // namespace mozilla::dom

@@ -4,6 +4,7 @@
 
 #include "LocalFileSystemAccessHandler.h"
 
+#include "fs/FileSystemRequestHandler.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
@@ -15,7 +16,6 @@
 #include "mozilla/dom/FileSystemManager.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/StorageManager.h"
-#include "fs/FileSystemRequestHandler.h"
 #include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
 #include "nsGlobalWindowInner.h"
@@ -300,8 +300,7 @@ void ApplyStartIn(
 
     nsCOMPtr<nsIFile> directory;
     if (handle.Kind() == FileSystemHandleKind::File) {
-      if (NS_FAILED(file->GetParent(getter_AddRefs(directory))) ||
-          !directory) {
+      if (NS_FAILED(file->GetParent(getter_AddRefs(directory))) || !directory) {
         return;
       }
     } else {

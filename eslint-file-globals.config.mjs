@@ -168,6 +168,7 @@ export default [
       "dom/filesystem/compat/tests/script_entries.js",
       "dom/filesystem/tests/script_fileList.js",
       "dom/filesystem/tests/script_promptHandler.js",
+      "dom/fs/test/mochitest/script_localFileSystemAccess.js",
       "dom/html/test/file_cookiemanager.js",
       "dom/html/test/formSubmission_chrome.js",
       "dom/html/test/script_fakepath.js",

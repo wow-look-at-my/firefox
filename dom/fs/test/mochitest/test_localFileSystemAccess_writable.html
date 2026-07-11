@@ -1,0 +1,241 @@
+<!--
+  Any copyright is dedicated to the Public Domain.
+  http://creativecommons.org/publicdomain/zero/1.0/
+-->
+<html>
+<head>
+  <title>Local File System Access writable stream test</title>
+
+  <script src="/tests/SimpleTest/SimpleTest.js"></script>
+  <script src="localFileSystemAccess_helpers.js"></script>
+  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
+
+  <script type="text/javascript">
+    add_task(async function init() {
+      await setupLocalFileSystemAccessTest();
+    });
+
+    add_task(async function test_write_and_commit() {
+      const dirPath = joinPath(baseDir, "writabledir");
+      const path = joinPath(dirPath, "target.txt");
+      await csMakeDir(dirPath);
+      await csWrite(path, "original content");
+
+      const handle = await pickFile(path);
+      const writable = await handle.createWritable();
+
+      await writable.write("brand new data");
+
+      is(await csRead(path), "original content",
+         "target file is untouched before close");
+      const siblings = await csListDir(dirPath);
+      ok(siblings.includes("target.txt.crswap"),
+         `swap file exists next to the target (${siblings})`);
+
+      await writable.close();
+
+      is(await csRead(path), "brand new data",
+         "close commits the written data to the real file");
+      const after = await csListDir(dirPath);
+      ok(!after.some(name => name.endsWith(".crswap")),
+         `swap file is gone after close (${after})`);
+    });
+
+    add_task(async function test_keep_existing_data() {
+      const path = joinPath(baseDir, "keepdata.txt");
+      await csWrite(path, "0123456789");
+
+      const handle = await pickFile(path);
+
+      const keeping = await handle.createWritable({ keepExistingData: true });
+      await keeping.write("AB");
+      await keeping.close();
+      is(await csRead(path), "AB23456789",
+         "keepExistingData:true starts from a copy of the target");
+
+      const fresh = await handle.createWritable({ keepExistingData: false });
+      await fresh.write("XY");
+      await fresh.close();
+      is(await csRead(path), "XY",
+         "keepExistingData:false starts from an empty file");
+    });
+
+    add_task(async function test_write_forms_seek_truncate() {
+      const path = joinPath(baseDir, "forms.txt");
+      await csWrite(path, "seed");
+
+      const handle = await pickFile(path);
+      const writable = await handle.createWritable();
+
+      await writable.write("AAAAAA");
+      await writable.write(new Blob(["bb"]));
+      await writable.write(new TextEncoder().encode("cc").buffer);
+      await writable.write({ type: "write", data: "DD", position: 0 });
+      await writable.write({ type: "seek", position: 8 });
+      await writable.write("!");
+      await writable.write({ type: "truncate", size: 9 });
+      await writable.close();
+
+      // "AAAAAA" + "bb" + "cc" = AAAAAAbbcc; "DD"@0 = DDAAAAbbcc;
+      // "!"@8 = DDAAAAbb!c; truncate(9) = DDAAAAbb!
+      is(await csRead(path), "DDAAAAbb!",
+         "string, Blob, ArrayBuffer and WriteParams writes compose");
+
+      const writable2 = await handle.createWritable({
+        keepExistingData: true,
+      });
+      await writable2.seek(2);
+      await writable2.write("xx");
+      await writable2.truncate(6);
+      await writable2.close();
+      is(await csRead(path), "DDxxAA",
+         "seek() and truncate() methods work");
+    });
+
+    add_task(async function test_abort_discards() {
+      const dirPath = joinPath(baseDir, "abortdir");
+      const path = joinPath(dirPath, "keeper.txt");
+      await csMakeDir(dirPath);
+      await csWrite(path, "precious");
+
+      const handle = await pickFile(path);
+      const writable = await handle.createWritable();
+      await writable.write("garbage");
+      await writable.abort();
+
+      is(await csRead(path), "precious", "abort leaves the target untouched");
+      const listing = await csListDir(dirPath);
+      ok(!listing.some(name => name.endsWith(".crswap")),
+         `abort removed the swap file (${listing})`);
+    });
+
+    add_task(async function test_swap_files_invisible_in_iteration() {
+      const dirPath = joinPath(baseDir, "swapvisibility");
+      const path = joinPath(dirPath, "shown.txt");
+      await csMakeDir(dirPath);
+      await csWrite(path, "visible");
+
+      const dir = await pickDirectory(dirPath);
+      const file = await dir.getFileHandle("shown.txt");
+      const writable = await file.createWritable();
+
+      const onDisk = await csListDir(dirPath);
+      ok(onDisk.includes("shown.txt.crswap"),
+         `swap file really exists on disk (${onDisk})`);
+
+      const iterated = [];
+      for await (const name of dir.keys()) {
+        iterated.push(name);
+      }
+      isDeeply(iterated, ["shown.txt"],
+               "directory iteration hides .crswap files");
+
+      await writable.abort();
+    });
+
+    add_task(async function test_concurrent_writables() {
+      const dirPath = joinPath(baseDir, "concurrent");
+      const path = joinPath(dirPath, "shared.txt");
+      await csMakeDir(dirPath);
+      await csWrite(path, "base");
+
+      const handle = await pickFile(path);
+
+      const first = await handle.createWritable();
+      const second = await handle.createWritable();
+
+      const listing = await csListDir(dirPath);
+      const swapNames = listing.filter(name => name.endsWith(".crswap"));
+      is(swapNames.length, 2,
+         `two concurrent writables use distinct swap files (${listing})`);
+
+      await first.write("first writer");
+      await second.write("second writer");
+
+      await first.close();
+      is(await csRead(path), "first writer", "first close committed");
+
+      await second.close();
+      is(await csRead(path), "second writer",
+         "second close committed last (last writer wins)");
+
+      const after = await csListDir(dirPath);
+      ok(!after.some(name => name.endsWith(".crswap")),
+         `all swap files cleaned up (${after})`);
+    });
+
+    add_task(async function test_locked_entries_deny_modification() {
+      const dirPath = joinPath(baseDir, "lockdir");
+      const path = joinPath(dirPath, "locked.txt");
+      await csMakeDir(dirPath);
+      await csWrite(path, "locked content");
+
+      const dir = await pickDirectory(dirPath);
+      const file = await dir.getFileHandle("locked.txt");
+      const writable = await file.createWritable();
+
+      await rejectsWith(dir.removeEntry("locked.txt"),
+                        "NoModificationAllowedError",
+                        "removeEntry on a file with an open writable");
+      await rejectsWith(file.move("newname.txt"),
+                        "NoModificationAllowedError",
+                        "rename of a file with an open writable");
+
+      const parent = await pickDirectory(baseDir);
+      await rejectsWith(parent.removeEntry("lockdir", { recursive: true }),
+                        "NoModificationAllowedError",
+                        "recursive remove of a directory with a locked child");
+
+      await writable.close();
+
+      await dir.removeEntry("locked.txt");
+      ok(!(await csStat(path)).exists,
+         "removeEntry succeeds after the writable is closed");
+    });
+
+    add_task(async function test_writable_on_missing_file() {
+      const path = joinPath(baseDir, "gone-before-write.txt");
+      await csWrite(path, "x");
+
+      const handle = await pickFile(path);
+      await csRemove(path);
+
+      await rejectsWith(handle.createWritable(), "NotFoundError",
+                        "createWritable on an out-of-band deleted file");
+    });
+
+    add_task(async function test_save_picker_creates_file() {
+      const path = joinPath(baseDir, "fresh-save.txt");
+
+      const handle = await pickSaveFile(path, {
+        suggestedName: "fresh-save.txt",
+      });
+      is(handle.kind, "file", "save picker resolved a file handle");
+      is(handle.name, "fresh-save.txt", "save handle name");
+
+      const stat = await csStat(path);
+      ok(stat.exists, "picked save target exists on disk");
+      is(stat.size, 0, "created save target is empty");
+
+      const writable = await handle.createWritable();
+      await writable.write("saved!");
+      await writable.close();
+      is(await csRead(path), "saved!", "save handle is writable");
+    });
+
+    add_task(async function test_save_picker_existing_not_truncated() {
+      const path = joinPath(baseDir, "existing-save.txt");
+      await csWrite(path, "do not truncate me");
+
+      const handle = await pickSaveFile(path);
+      is(handle.name, "existing-save.txt", "save handle name");
+
+      is(await csRead(path), "do not truncate me",
+         "existing save target is not truncated by the pick");
+    });
+  </script>
+</head>
+
+<body></body>
+
+</html>
