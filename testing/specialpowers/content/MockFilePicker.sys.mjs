@@ -308,8 +308,12 @@ MockFilePickerInstance.prototype = {
           }
         }
 
-        // Create DOM File/Directory objects in the correct global.
-        await this._materializeDomObjects();
+        // Create DOM File/Directory objects in the correct global. Raw-path
+        // consumers only read the nsIFile-based getters, and no suitable DOM
+        // global exists when the pick was proxied from a content process.
+        if (!this.rawPathResults) {
+          await this._materializeDomObjects();
+        }
       } catch (ex) {
         result = Ci.nsIFilePicker.returnCancel;
       }

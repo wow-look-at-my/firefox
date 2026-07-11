@@ -5,3 +5,5 @@
 [DEFAULT]
 
 ["browser_localFileSystemAccess_file_scheme.js"]
+
+["browser_localFileSystemAccess_real_ipc.js"]
