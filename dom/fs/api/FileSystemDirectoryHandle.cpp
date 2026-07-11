@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "FileSystemDirectoryIteratorFactory.h"
+#include "fs/FileSystemConstants.h"
 #include "fs/FileSystemRequestHandler.h"
 #include "js/StructuredClone.h"
 #include "js/TypeDecls.h"
@@ -160,12 +161,16 @@ FileSystemDirectoryHandle::ReadStructuredClone(
     return nullptr;
   }
 
+  const bool isLocal = (kind & fs::kLocalFileSystemHandleKindFlag) != 0;
+  kind &= ~fs::kLocalFileSystemHandleKindFlag;
+
   if (kind != static_cast<uint32_t>(FileSystemHandleKind::Directory)) {
     return nullptr;
   }
 
   RefPtr<FileSystemDirectoryHandle> result =
-      FileSystemHandle::ConstructDirectoryHandle(aCx, aGlobal, aReader);
+      FileSystemHandle::ConstructDirectoryHandle(aCx, aGlobal, aReader,
+                                                 isLocal);
   if (!result) {
     return nullptr;
   }

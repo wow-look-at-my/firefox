@@ -6,12 +6,15 @@
 
 #include "FileSystemDirectoryHandle.h"
 #include "FileSystemFileHandle.h"
+#include "fs/FileSystemConstants.h"
 #include "fs/FileSystemRequestHandler.h"
 #include "js/StructuredClone.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/dom/FileSystemAccessBinding.h"
 #include "mozilla/dom/FileSystemHandleBinding.h"
 #include "mozilla/dom/FileSystemLog.h"
 #include "mozilla/dom/FileSystemManager.h"
+#include "mozilla/dom/PermissionStatusBinding.h"
 #include "mozilla/dom/Promise-inl.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/StorageManager.h"
@@ -30,16 +33,29 @@ namespace {
 
 bool ConstructHandleMetadata(JSContext* aCx, nsIGlobalObject* aGlobal,
                              JSStructuredCloneReader* aReader,
-                             const bool aDirectory,
+                             const bool aDirectory, const bool aLocal,
                              fs::FileSystemEntryMetadata& aMetadata) {
   using namespace mozilla::dom::fs;
 
+  uint32_t entryIdLength = 32u;
+  if (aLocal) {
+    if (!JS_ReadBytes(aReader, reinterpret_cast<void*>(&entryIdLength),
+                      sizeof(uint32_t))) {
+      return false;
+    }
+
+    if (entryIdLength == 0 || entryIdLength > kLocalEntryIdMaxLength) {
+      return false;
+    }
+  }
+
   EntryId entryId;
-  if (!entryId.SetLength(32u, fallible)) {
+  if (!entryId.SetLength(entryIdLength, fallible)) {
     return false;
   }
 
-  if (!JS_ReadBytes(aReader, static_cast<void*>(entryId.BeginWriting()), 32u)) {
+  if (!JS_ReadBytes(aReader, static_cast<void*>(entryId.BeginWriting()),
+                    entryIdLength)) {
     return false;
   }
 
@@ -131,6 +147,33 @@ already_AddRefed<Promise> FileSystemHandle::IsSameEntry(
   return promise.forget();
 }
 
+already_AddRefed<Promise> FileSystemHandle::QueryPermission(
+    const FileSystemHandlePermissionDescriptor& aDescriptor,
+    ErrorResult& aError) {
+  RefPtr<Promise> promise = Promise::Create(GetParentObject(), aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+
+  // Both the local backend and OPFS auto-grant all permission modes.
+  promise->MaybeResolve(PermissionState::Granted);
+
+  return promise.forget();
+}
+
+already_AddRefed<Promise> FileSystemHandle::RequestPermission(
+    const FileSystemHandlePermissionDescriptor& aDescriptor,
+    ErrorResult& aError) {
+  RefPtr<Promise> promise = Promise::Create(GetParentObject(), aError);
+  if (aError.Failed()) {
+    return nullptr;
+  }
+
+  promise->MaybeResolve(PermissionState::Granted);
+
+  return promise.forget();
+}
+
 already_AddRefed<Promise> FileSystemHandle::Move(const nsAString& aName,
                                                  ErrorResult& aError) {
   LOG(("Move %s to %s", NS_ConvertUTF16toUTF8(mMetadata.entryName()).get(),
@@ -215,15 +258,19 @@ already_AddRefed<FileSystemHandle> FileSystemHandle::ReadStructuredClone(
     return nullptr;
   }
 
+  const bool isLocal = (kind & fs::kLocalFileSystemHandleKindFlag) != 0;
+  kind &= ~fs::kLocalFileSystemHandleKindFlag;
+
   if (kind == static_cast<uint32_t>(FileSystemHandleKind::Directory)) {
     RefPtr<FileSystemHandle> result =
-        FileSystemHandle::ConstructDirectoryHandle(aCx, aGlobal, aReader);
+        FileSystemHandle::ConstructDirectoryHandle(aCx, aGlobal, aReader,
+                                                   isLocal);
     return result.forget();
   }
 
   if (kind == static_cast<uint32_t>(FileSystemHandleKind::File)) {
     RefPtr<FileSystemHandle> result =
-        FileSystemHandle::ConstructFileHandle(aCx, aGlobal, aReader);
+        FileSystemHandle::ConstructFileHandle(aCx, aGlobal, aReader, isLocal);
     return result.forget();
   }
 
@@ -234,18 +281,33 @@ bool FileSystemHandle::WriteStructuredClone(
     JSContext* aCx, JSStructuredCloneWriter* aWriter) const {
   LOG_VERBOSE(("Writing File/DirectoryHandle"));
 
-  // TODO: Serialization of local handles requires a length-prefixed format
-  // for the variable-length EntryId (the absolute OS path).
-  if (mManager->IsLocal()) {
-    return false;
-  }
-
-  MOZ_ASSERT(mMetadata.entryId().Length() == 32);
+  const bool isLocal = mManager->IsLocal();
 
   auto kind = static_cast<uint32_t>(Kind());
+  if (isLocal) {
+    kind |= fs::kLocalFileSystemHandleKindFlag;
+  }
+
   if (NS_WARN_IF(!JS_WriteBytes(aWriter, static_cast<void*>(&kind),
                                 sizeof(uint32_t)))) {
     return false;
+  }
+
+  if (isLocal) {
+    // Local entry ids are variable-length absolute paths; length-prefix them.
+    uint32_t entryIdLength = mMetadata.entryId().Length();
+    if (NS_WARN_IF(entryIdLength == 0 ||
+                   entryIdLength > fs::kLocalEntryIdMaxLength)) {
+      return false;
+    }
+
+    if (NS_WARN_IF(!JS_WriteBytes(aWriter,
+                                  reinterpret_cast<void*>(&entryIdLength),
+                                  sizeof(uint32_t)))) {
+      return false;
+    }
+  } else {
+    MOZ_ASSERT(mMetadata.entryId().Length() == 32);
   }
 
   if (NS_WARN_IF(!JS_WriteBytes(
@@ -267,13 +329,13 @@ bool FileSystemHandle::WriteStructuredClone(
 
 // static
 already_AddRefed<FileSystemFileHandle> FileSystemHandle::ConstructFileHandle(
-    JSContext* aCx, nsIGlobalObject* aGlobal,
-    JSStructuredCloneReader* aReader) {
+    JSContext* aCx, nsIGlobalObject* aGlobal, JSStructuredCloneReader* aReader,
+    bool aLocal) {
   LOG(("Reading FileHandle"));
 
   fs::FileSystemEntryMetadata metadata;
   if (!ConstructHandleMetadata(aCx, aGlobal, aReader, /* aDirectory */ false,
-                               metadata)) {
+                               aLocal, metadata)) {
     return nullptr;
   }
 
@@ -284,7 +346,8 @@ already_AddRefed<FileSystemFileHandle> FileSystemHandle::ConstructFileHandle(
 
   // Note that the actor may not exist or may not be connected yet.
   RefPtr<FileSystemManager> fileSystemManager =
-      storageManager->GetFileSystemManager();
+      aLocal ? storageManager->GetLocalFileSystemManager()
+             : storageManager->GetFileSystemManager();
 
   RefPtr<FileSystemFileHandle> fsHandle =
       new FileSystemFileHandle(aGlobal, fileSystemManager, metadata);
@@ -296,12 +359,13 @@ already_AddRefed<FileSystemFileHandle> FileSystemHandle::ConstructFileHandle(
 already_AddRefed<FileSystemDirectoryHandle>
 FileSystemHandle::ConstructDirectoryHandle(JSContext* aCx,
                                            nsIGlobalObject* aGlobal,
-                                           JSStructuredCloneReader* aReader) {
+                                           JSStructuredCloneReader* aReader,
+                                           bool aLocal) {
   LOG(("Reading DirectoryHandle"));
 
   fs::FileSystemEntryMetadata metadata;
   if (!ConstructHandleMetadata(aCx, aGlobal, aReader, /* aDirectory */ true,
-                               metadata)) {
+                               aLocal, metadata)) {
     return nullptr;
   }
 
@@ -312,7 +376,8 @@ FileSystemHandle::ConstructDirectoryHandle(JSContext* aCx,
 
   // Note that the actor may not exist or may not be connected yet.
   RefPtr<FileSystemManager> fileSystemManager =
-      storageManager->GetFileSystemManager();
+      aLocal ? storageManager->GetLocalFileSystemManager()
+             : storageManager->GetFileSystemManager();
 
   RefPtr<FileSystemDirectoryHandle> fsHandle =
       new FileSystemDirectoryHandle(aGlobal, fileSystemManager, metadata);
