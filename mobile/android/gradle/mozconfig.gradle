@@ -39,6 +39,45 @@ if (!ext.hasProperty("topsrcdir")) {
     ext.topsrcdir = file(buildscript.getSourceFile()).getParentFile().getParentFile().getParentFile().getParentFile().absolutePath
 }
 
+// GitHub's automatic dependency submission workflow
+// (dynamic/dependency-graph/auto-submission, job submit-gradle) evaluates this
+// build in a fresh checkout without a mach objdir. Provide a stub
+// configuration so evaluation can proceed; settings.gradle then exposes an
+// empty project tree. Everything else keeps requiring `./mach configure`.
+def isGithubDependencySubmission = (
+        System.getenv("GITHUB_DEPENDENCY_GRAPH_ENABLED") != null ||
+        (System.getenv("GITHUB_WORKFLOW_REF") ?: "").contains("/dynamic/dependency-graph/") ||
+        (System.getenv("GITHUB_ACTIONS") == "true" && System.getenv("GITHUB_JOB") == "submit-gradle")
+    ) &&
+    !System.getenv("MOZCONFIG") &&
+    !System.getenv("MOZ_OBJDIR") &&
+    !new File(topsrcdir, ".mozconfig").exists() &&
+    !new File(topsrcdir, "mozconfig").exists()
+
+if (isGithubDependencySubmission) {
+    gradle.ext.mozconfig = [
+        dependency_submission_stub: true,
+        topsrcdir: topsrcdir,
+        topobjdir: new File(topsrcdir, ".gradle/github-dependency-submission-objdir").absolutePath,
+        substs: [
+            GRADLE_MAVEN_REPOSITORIES: [
+                "https://maven.mozilla.org/maven2/",
+                "https://maven.google.com/",
+                "https://repo.maven.apache.org/maven2/",
+                "https://plugins.gradle.org/m2/",
+            ],
+        ],
+    ]
+    gradle.ext.configureMavenRepositories = { handler ->
+        gradle.mozconfig.substs.GRADLE_MAVEN_REPOSITORIES.each { repository ->
+            handler.maven {
+                url = repository
+            }
+        }
+    }
+    return
+}
+
 abstract class TopobjdirValueSource implements ValueSource<String, TopobjdirValueSource.Params> {
     interface Params extends ValueSourceParameters {
         Property<String> getTopsrcdir()
