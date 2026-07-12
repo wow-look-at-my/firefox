@@ -187,6 +187,67 @@ void FilePickerParent::SendFilesOrDirectories(
 void FilePickerParent::Done(nsIFilePicker::ResultCode aResult) {
   mResult = aResult;
 
+  if (mRawPathResults) {
+    if (mResult != nsIFilePicker::returnOK &&
+        mResult != nsIFilePicker::returnReplace) {
+      (void)Send__delete__(this, void_t(), mResult);
+      return;
+    }
+
+    nsTArray<nsCOMPtr<nsIFile>> files;
+    if (mMode == nsIFilePicker::modeOpenMultiple) {
+      nsCOMPtr<nsISimpleEnumerator> iter;
+      if (NS_WARN_IF(NS_FAILED(mFilePicker->GetFiles(getter_AddRefs(iter))))) {
+        // Returning without Send__delete__ would leave the content promise
+        // pending forever; fail the pick instead.
+        (void)Send__delete__(this, void_t(), nsIFilePicker::returnCancel);
+        return;
+      }
+
+      nsCOMPtr<nsISupports> supports;
+      bool loop = true;
+      while (NS_SUCCEEDED(iter->HasMoreElements(&loop)) && loop) {
+        iter->GetNext(getter_AddRefs(supports));
+        if (supports) {
+          nsCOMPtr<nsIFile> file = do_QueryInterface(supports);
+          if (file) {
+            files.AppendElement(file);
+          }
+        }
+      }
+    } else {
+      nsCOMPtr<nsIFile> file;
+      mFilePicker->GetFile(getter_AddRefs(file));
+      if (file) {
+        files.AppendElement(file);
+      }
+    }
+
+    if (files.IsEmpty()) {
+      (void)Send__delete__(this, void_t(), mResult);
+      return;
+    }
+
+    nsTArray<nsString> paths;
+    for (const nsCOMPtr<nsIFile>& file : files) {
+      nsAutoString path;
+      if (NS_WARN_IF(NS_FAILED(file->GetPath(path)))) {
+        continue;
+      }
+      paths.AppendElement(path);
+    }
+
+    if (paths.IsEmpty()) {
+      (void)Send__delete__(this, void_t(), nsIFilePicker::returnCancel);
+      return;
+    }
+
+    InputPaths inputPaths;
+    inputPaths.paths() = std::move(paths);
+    (void)Send__delete__(this, inputPaths, mResult);
+    return;
+  }
+
   if (mResult != nsIFilePicker::returnOK) {
     (void)Send__delete__(this, void_t(), mResult);
     return;
@@ -274,13 +335,16 @@ mozilla::ipc::IPCResult FilePickerParent::RecvOpen(
     nsTArray<nsString>&& aFilters, nsTArray<nsString>&& aFilterNames,
     nsTArray<nsString>&& aRawFilters, const nsString& aDisplayDirectory,
     const nsString& aDisplaySpecialDirectory, const nsString& aOkButtonLabel,
-    const nsIFilePicker::CaptureTarget& aCapture) {
+    const nsIFilePicker::CaptureTarget& aCapture, const bool& aRawPathResults) {
   if (!CreateFilePicker()) {
     (void)Send__delete__(this, void_t(), nsIFilePicker::returnCancel);
     return IPC_OK();
   }
 
+  mRawPathResults = aRawPathResults;
+
   mFilePicker->SetAddToRecentDocs(aAddToRecentDocs);
+  mFilePicker->SetRawPathResults(aRawPathResults);
 
   for (uint32_t i = 0; i < aFilters.Length(); ++i) {
     mFilePicker->AppendFilter(aFilterNames[i], aFilters[i]);

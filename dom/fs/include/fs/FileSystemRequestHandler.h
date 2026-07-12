@@ -39,7 +39,8 @@ class FileSystemRequestHandler {
 
   virtual void GetFileHandle(RefPtr<FileSystemManager>& aManager,
                              const FileSystemChildMetadata& aFile, bool aCreate,
-                             RefPtr<Promise> aPromise, ErrorResult& aError);
+                             bool aTruncate, RefPtr<Promise> aPromise,
+                             ErrorResult& aError);
 
   virtual void GetFile(RefPtr<FileSystemManager>& aManager,
                        const FileSystemEntryMetadata& aFile,

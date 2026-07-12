@@ -22,4 +22,12 @@ interface FileSystemHandle {
 
   [NewObject]
   Promise<boolean> isSameEntry(FileSystemHandle other);
+
+  /* https://wicg.github.io/file-system-access/#api-filesystemhandle */
+  [NewObject, Pref="dom.fs.local.enabled"]
+  Promise<PermissionState> queryPermission(
+      optional FileSystemHandlePermissionDescriptor descriptor = {});
+  [NewObject, Pref="dom.fs.local.enabled"]
+  Promise<PermissionState> requestPermission(
+      optional FileSystemHandlePermissionDescriptor descriptor = {});
 };

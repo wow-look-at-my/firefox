@@ -49,6 +49,9 @@ struct FileSystemGetHandleRequest
 {
   FileSystemChildMetadata handle;
   bool create;
+  // Truncate an existing file to zero bytes. Only the local file system
+  // save-picker flow sets this; OPFS and directory requests never do.
+  bool truncate;
 };
 
 /**

@@ -736,12 +736,18 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(StorageManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGlobal)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFileSystemManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocalFileSystemManager)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 void StorageManager::Shutdown() {
   if (mFileSystemManager) {
     mFileSystemManager->Shutdown();
     mFileSystemManager = nullptr;
+  }
+
+  if (mLocalFileSystemManager) {
+    mLocalFileSystemManager->Shutdown();
+    mLocalFileSystemManager = nullptr;
   }
 }
 
@@ -753,6 +759,18 @@ already_AddRefed<FileSystemManager> StorageManager::GetFileSystemManager() {
   }
 
   return do_AddRef(mFileSystemManager);
+}
+
+already_AddRefed<FileSystemManager>
+StorageManager::GetLocalFileSystemManager() {
+  if (!mLocalFileSystemManager) {
+    MOZ_ASSERT(mGlobal);
+
+    mLocalFileSystemManager =
+        MakeRefPtr<FileSystemManager>(mGlobal, this, /* aLocal */ true);
+  }
+
+  return do_AddRef(mLocalFileSystemManager);
 }
 
 // WebIDL Boilerplate

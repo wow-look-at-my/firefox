@@ -89,6 +89,7 @@ class nsFilePickerProxy : public nsBaseFilePicker,
 
   nsTArray<nsString> mFilters;
   nsTArray<nsString> mFilterNames;
+  nsTArray<nsString> mRawPaths;
 };
 
 #endif  // NSFILEPICKERPROXY_H

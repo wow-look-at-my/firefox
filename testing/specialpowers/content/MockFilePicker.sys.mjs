@@ -124,7 +124,11 @@ export var MockFilePicker = {
     this.returnData = [];
 
     for (let file of files) {
-      if (ChromeUtils.getClassName(file) === "File") {
+      if (typeof file == "string") {
+        // A raw OS path; the nsIFile is created here so that sandboxed
+        // content callers do not have to construct chrome objects.
+        this.returnData.push({ nsIFile: new lazy.FileUtils.File(file) });
+      } else if (ChromeUtils.getClassName(file) === "File") {
         this.returnData.push({ domFile: file });
       } else {
         this.returnData.push({ nsIFile: file });
@@ -170,6 +174,7 @@ MockFilePickerInstance.prototype = {
   filterIndex: 0,
   displayDirectory: null,
   displaySpecialDirectory: "",
+  rawPathResults: false,
   get file() {
     if (MockFilePicker.returnData.length >= 1) {
       return MockFilePicker.returnData[0].nsIFile;
@@ -303,8 +308,12 @@ MockFilePickerInstance.prototype = {
           }
         }
 
-        // Create DOM File/Directory objects in the correct global.
-        await this._materializeDomObjects();
+        // Create DOM File/Directory objects in the correct global. Raw-path
+        // consumers only read the nsIFile-based getters, and no suitable DOM
+        // global exists when the pick was proxied from a content process.
+        if (!this.rawPathResults) {
+          await this._materializeDomObjects();
+        }
       } catch (ex) {
         result = Ci.nsIFilePicker.returnCancel;
       }

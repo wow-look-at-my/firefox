@@ -21,6 +21,7 @@ namespace dom {
 class FileSystemDirectoryHandle;
 class FileSystemFileHandle;
 enum class FileSystemHandleKind : uint8_t;
+struct FileSystemHandlePermissionDescriptor;
 class FileSystemManager;
 class FileSystemManagerChild;
 class Promise;
@@ -55,6 +56,14 @@ class FileSystemHandle : public nsISupports, public nsWrapperCache {
   already_AddRefed<Promise> IsSameEntry(FileSystemHandle& aOther,
                                         ErrorResult& aError) const;
 
+  already_AddRefed<Promise> QueryPermission(
+      const FileSystemHandlePermissionDescriptor& aDescriptor,
+      ErrorResult& aError);
+
+  already_AddRefed<Promise> RequestPermission(
+      const FileSystemHandlePermissionDescriptor& aDescriptor,
+      ErrorResult& aError);
+
   // [Serializable] implementation
   static already_AddRefed<FileSystemHandle> ReadStructuredClone(
       JSContext* aCx, nsIGlobalObject* aGlobal,
@@ -88,11 +97,11 @@ class FileSystemHandle : public nsISupports, public nsWrapperCache {
 
   static already_AddRefed<FileSystemFileHandle> ConstructFileHandle(
       JSContext* aCx, nsIGlobalObject* aGlobal,
-      JSStructuredCloneReader* aReader);
+      JSStructuredCloneReader* aReader, bool aLocal);
 
   static already_AddRefed<FileSystemDirectoryHandle> ConstructDirectoryHandle(
       JSContext* aCx, nsIGlobalObject* aGlobal,
-      JSStructuredCloneReader* aReader);
+      JSStructuredCloneReader* aReader, bool aLocal);
 
   nsCOMPtr<nsIGlobalObject> mGlobal;
 

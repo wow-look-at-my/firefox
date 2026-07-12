@@ -117,6 +117,7 @@ class BackgroundParentImpl : public PBackgroundParent {
   mozilla::ipc::IPCResult RecvCreateFileSystemManagerParent(
       const PrincipalInfo& aPrincipalInfo,
       Endpoint<mozilla::dom::PFileSystemManagerParent>&& aParentEndpoint,
+      const bool& aLocal,
       CreateFileSystemManagerParentResolver&& aResolver) override;
 
   mozilla::ipc::IPCResult RecvCreateWebTransportParent(

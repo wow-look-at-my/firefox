@@ -4,6 +4,7 @@
 
 #include "FileSystemManagerParentFactory.h"
 
+#include "FileSystemLocalService.h"
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/FileSystemDataManager.h"
@@ -16,6 +17,7 @@
 #include "mozilla/dom/quota/ResultExtensions.h"
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/PBackgroundParent.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsString.h"
 
@@ -24,9 +26,30 @@ mozilla::ipc::IPCResult CreateFileSystemManagerParent(
     RefPtr<mozilla::ipc::PBackgroundParent> aBackgroundActor,
     const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
     mozilla::ipc::Endpoint<PFileSystemManagerParent>&& aParentEndpoint,
-    std::function<void(const nsresult&)>&& aResolver) {
+    bool aLocal, std::function<void(const nsresult&)>&& aResolver) {
   using CreateActorPromise =
       MozPromise<RefPtr<FileSystemManagerParent>, nsresult, true>;
+
+  if (aLocal) {
+    QM_TRY(
+        OkIf(StaticPrefs::dom_fs_local_enabled()), IPC_OK(),
+        [aResolver](const auto&) { aResolver(NS_ERROR_DOM_NOT_ALLOWED_ERR); });
+
+    QM_TRY(OkIf(aParentEndpoint.IsValid()), IPC_OK(),
+           [aResolver](const auto&) { aResolver(NS_ERROR_INVALID_ARG); });
+
+    // This blocks Null and Expanded principals
+    QM_TRY(OkIf(quota::IsPrincipalInfoValid(aPrincipalInfo)), IPC_OK(),
+           [aResolver](const auto&) { aResolver(NS_ERROR_DOM_SECURITY_ERR); });
+
+    LOG(("CreateFileSystemManagerParent, local mode"));
+
+    FileSystemLocalService::GetOrCreate()->CreateAndBindActor(
+        std::move(aBackgroundActor), std::move(aParentEndpoint),
+        std::move(aResolver));
+
+    return IPC_OK();
+  }
 
   QM_TRY(OkIf(StaticPrefs::dom_fs_enabled()), IPC_OK(),
          [aResolver](const auto&) { aResolver(NS_ERROR_DOM_NOT_ALLOWED_ERR); });
