@@ -10,6 +10,7 @@
 #include "fs/FileSystemRequestHandler.h"
 #include "js/StructuredClone.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/FileSystemAccessBinding.h"
 #include "mozilla/dom/FileSystemHandleBinding.h"
 #include "mozilla/dom/FileSystemLog.h"
@@ -39,6 +40,12 @@ bool ConstructHandleMetadata(JSContext* aCx, nsIGlobalObject* aGlobal,
 
   uint32_t entryIdLength = 32u;
   if (aLocal) {
+    // Stored local-handle records stay unreadable while the feature is off,
+    // matching the pref gate on the write side's manager.
+    if (!StaticPrefs::dom_fs_local_enabled()) {
+      return false;
+    }
+
     if (!JS_ReadBytes(aReader, reinterpret_cast<void*>(&entryIdLength),
                       sizeof(uint32_t))) {
       return false;

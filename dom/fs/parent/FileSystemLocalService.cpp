@@ -69,9 +69,12 @@ void FileSystemLocalLockTable::UnlockShared(const nsCString& aPath) {
 bool FileSystemLocalLockTable::IsAnyLockedUnder(const nsCString& aPath) {
   MutexAutoLock lock(mMutex);
 
+  // A path ending in the separator (the filesystem root) covers everything
+  // beginning with it; other paths need a separator boundary after the prefix.
   auto isUnder = [&aPath](const nsACString& aLocked) {
     return StringBeginsWith(aLocked, aPath) &&
            (aLocked.Length() == aPath.Length() ||
+            aPath.Last() == kLocalPathSeparatorChar ||
             aLocked.CharAt(aPath.Length()) == kLocalPathSeparatorChar);
   };
 

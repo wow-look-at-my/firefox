@@ -31,10 +31,9 @@ mozilla::ipc::IPCResult CreateFileSystemManagerParent(
       MozPromise<RefPtr<FileSystemManagerParent>, nsresult, true>;
 
   if (aLocal) {
-    QM_TRY(OkIf(StaticPrefs::dom_fs_local_enabled()), IPC_OK(),
-           [aResolver](const auto&) {
-             aResolver(NS_ERROR_DOM_NOT_ALLOWED_ERR);
-           });
+    QM_TRY(
+        OkIf(StaticPrefs::dom_fs_local_enabled()), IPC_OK(),
+        [aResolver](const auto&) { aResolver(NS_ERROR_DOM_NOT_ALLOWED_ERR); });
 
     QM_TRY(OkIf(aParentEndpoint.IsValid()), IPC_OK(),
            [aResolver](const auto&) { aResolver(NS_ERROR_INVALID_ARG); });
@@ -42,16 +41,6 @@ mozilla::ipc::IPCResult CreateFileSystemManagerParent(
     // This blocks Null and Expanded principals
     QM_TRY(OkIf(quota::IsPrincipalInfoValid(aPrincipalInfo)), IPC_OK(),
            [aResolver](const auto&) { aResolver(NS_ERROR_DOM_SECURITY_ERR); });
-
-    // Block use in PrivateBrowsing
-    QM_TRY(
-        OkIf(aPrincipalInfo.type() !=
-                 mozilla::ipc::PrincipalInfo::TContentPrincipalInfo ||
-             aPrincipalInfo.get_ContentPrincipalInfo()
-                     .attrs()
-                     .mPrivateBrowsingId == 0),
-        IPC_OK(),
-        [aResolver](const auto&) { aResolver(NS_ERROR_DOM_NOT_ALLOWED_ERR); });
 
     LOG(("CreateFileSystemManagerParent, local mode"));
 

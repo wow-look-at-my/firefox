@@ -309,11 +309,35 @@
       is(result.kind, "file", "worker-received handle kind");
       is(result.name, "worker.txt", "worker-received handle name");
       is(result.text, "worker content", "worker-received handle reads disk");
-      is(result.syncAccessError, "NotAllowedError",
-         "createSyncAccessHandle rejects with NotAllowedError in a worker");
+      is(result.syncAccessError, "InvalidStateError",
+         "createSyncAccessHandle rejects with InvalidStateError in a worker");
 
       worker.terminate();
       URL.revokeObjectURL(workerUrl);
+    });
+
+    add_task(async function test_pref_off_blocks_deserialization() {
+      const path = joinPath(baseDir, "pref-gate.txt");
+      await csWrite(path, "gate");
+
+      const handle = await pickFile(path);
+      ok(structuredClone(handle), "clone works while the pref is on");
+
+      await SpecialPowers.pushPrefEnv({
+        set: [["dom.fs.local.enabled", false]],
+      });
+      try {
+        let error = null;
+        try {
+          structuredClone(handle);
+        } catch (e) {
+          error = e;
+        }
+        is(error && error.name, "DataCloneError",
+           "local handle records do not deserialize while the pref is off");
+      } finally {
+        await SpecialPowers.popPrefEnv();
+      }
     });
   </script>
 </head>

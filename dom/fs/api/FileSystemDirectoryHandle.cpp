@@ -76,8 +76,8 @@ already_AddRefed<Promise> FileSystemDirectoryHandle::GetFileHandle(
 
   fs::Name name(aName);
   fs::FileSystemChildMetadata metadata(mMetadata.entryId(), name);
-  mRequestHandler->GetFileHandle(mManager, metadata, aOptions.mCreate, promise,
-                                 aError);
+  mRequestHandler->GetFileHandle(mManager, metadata, aOptions.mCreate,
+                                 /* aTruncate */ false, promise, aError);
   if (aError.Failed()) {
     return nullptr;
   }

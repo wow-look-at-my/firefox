@@ -177,3 +177,94 @@ add_task(async function test_file_scheme_persistence() {
     "write through the restored handle reached the real file"
   );
 });
+
+add_task(async function test_file_scheme_file_pickers() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["dom.fs.local.enabled", true]],
+  });
+
+  const tempDir = await IOUtils.createUniqueDirectory(
+    PathUtils.tempDir,
+    "lfsa-file-scheme-pickers"
+  );
+  registerCleanupFunction(() =>
+    IOUtils.remove(tempDir, { recursive: true, ignoreAbsent: true })
+  );
+
+  const openPath = PathUtils.join(tempDir, "open-me.txt");
+  const newSavePath = PathUtils.join(tempDir, "save-new.txt");
+  const existingSavePath = PathUtils.join(tempDir, "save-existing.txt");
+  const pagePath = PathUtils.join(tempDir, "page.html");
+  await IOUtils.writeUTF8(openPath, "file scheme open data");
+  await IOUtils.writeUTF8(existingSavePath, "content the pick must clear");
+  await IOUtils.writeUTF8(
+    pagePath,
+    '<!DOCTYPE html><meta charset="utf-8"><title>lfsa pickers</title>'
+  );
+
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    PathUtils.toFileURI(pagePath)
+  );
+  registerCleanupFunction(() => BrowserTestUtils.removeTab(tab));
+
+  await SpecialPowers.spawn(
+    tab.linkedBrowser,
+    [{ openPath, newSavePath, existingSavePath }],
+    async args => {
+      const MockFilePicker = content.SpecialPowers.MockFilePicker;
+      MockFilePicker.init();
+      const win = content.wrappedJSObject;
+
+      try {
+        MockFilePicker.setFiles([args.openPath]);
+        MockFilePicker.returnValue = MockFilePicker.returnOK;
+        content.document.notifyUserGestureActivation();
+        const handles = await win.showOpenFilePicker();
+        is(handles.length, 1, "open picker resolved one handle");
+        is(handles[0].name, "open-me.txt", "open handle name");
+        is(
+          await (await handles[0].getFile()).text(),
+          "file scheme open data",
+          "showOpenFilePicker getFile reads the real file on file://"
+        );
+
+        MockFilePicker.setFiles([args.newSavePath]);
+        MockFilePicker.returnValue = MockFilePicker.returnOK;
+        content.document.notifyUserGestureActivation();
+        const saveNew = await win.showSaveFilePicker();
+        is(saveNew.name, "save-new.txt", "save handle name");
+        is(
+          (await saveNew.getFile()).size,
+          0,
+          "missing save target is created empty on file://"
+        );
+
+        MockFilePicker.setFiles([args.existingSavePath]);
+        MockFilePicker.returnValue = MockFilePicker.returnReplace;
+        content.document.notifyUserGestureActivation();
+        const saveExisting = await win.showSaveFilePicker();
+        is(saveExisting.name, "save-existing.txt", "replace handle name");
+        is(
+          (await saveExisting.getFile()).size,
+          0,
+          "existing save target is truncated at pick on file://"
+        );
+      } finally {
+        MockFilePicker.cleanup();
+      }
+    }
+  );
+
+  ok(await IOUtils.exists(newSavePath), "save round trip created the target");
+  is(
+    (await IOUtils.stat(newSavePath)).size,
+    0,
+    "created save target is 0 bytes on disk"
+  );
+  is(
+    (await IOUtils.stat(existingSavePath)).size,
+    0,
+    "existing save target is 0 bytes on disk after the pick"
+  );
+});

@@ -291,9 +291,9 @@ add_task(async function test_show_save_file_picker_replace_existing() {
       is(handle.kind, "file", "replace handle kind");
       is(handle.name, "replace-target.txt", "replace handle name");
       is(
-        await (await handle.getFile()).text(),
-        "not yet replaced",
-        "picking an existing save target does not truncate it"
+        (await handle.getFile()).size,
+        0,
+        "picking an existing save target truncates it to 0 bytes"
       );
 
       const writable = await handle.createWritable();
@@ -332,4 +332,31 @@ add_task(async function test_canceled_pick_rejects() {
       "the parent-process picker ran and returned cancel"
     );
   });
+});
+
+add_task(async function test_pref_off_hides_api() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["dom.fs.local.enabled", false]],
+  });
+
+  // [Pref] WebIDL gating is evaluated per global, so the assertions need a
+  // tab opened after the flip.
+  await BrowserTestUtils.withNewTab(PAGE_URL, async browser => {
+    await SpecialPowers.spawn(browser, [], async () => {
+      const win = content.wrappedJSObject;
+      ok(!("showOpenFilePicker" in win), "showOpenFilePicker is hidden");
+      ok(!("showSaveFilePicker" in win), "showSaveFilePicker is hidden");
+      ok(!("showDirectoryPicker" in win), "showDirectoryPicker is hidden");
+      ok(
+        !("queryPermission" in win.FileSystemHandle.prototype),
+        "queryPermission is hidden from FileSystemHandle"
+      );
+      ok(
+        !("requestPermission" in win.FileSystemHandle.prototype),
+        "requestPermission is hidden from FileSystemHandle"
+      );
+    });
+  });
+
+  await SpecialPowers.popPrefEnv();
 });

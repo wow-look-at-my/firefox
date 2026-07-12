@@ -11,7 +11,10 @@ let chromeScript = null;
 let baseDir = null;
 
 function joinPath(...parts) {
-  return parts.join("/");
+  // baseDir is a native path, so it dictates the separator (Windows uses
+  // backslashes and rejects mixed-separator paths).
+  const sep = parts[0].includes("\\") ? "\\" : "/";
+  return parts.join(sep);
 }
 
 function armActivation() {

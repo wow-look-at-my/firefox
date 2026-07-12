@@ -175,6 +175,39 @@
       is(await sub.resolve(root), null, "resolve ancestor is null");
     });
 
+    add_task(async function test_resolve_from_filesystem_root() {
+      const sep = baseDir.includes("\\") ? "\\" : "/";
+      const rootPath = sep === "/"
+        ? "/"
+        : baseDir.slice(0, baseDir.indexOf(sep) + 1);
+
+      const filePath = joinPath(baseDir, "resolve-from-root.txt");
+      await csWrite(filePath, "root resolve");
+
+      const rootDir = await pickDirectory(rootPath);
+      is(rootDir.kind, "directory", "the filesystem root can be picked");
+
+      const file = await pickFile(filePath);
+
+      const expected = filePath.slice(rootPath.length).split(sep);
+      isDeeply(await rootDir.resolve(file), expected,
+               "resolve from the filesystem root returns the full path");
+    });
+
+    add_task(async function test_create_through_file_parent() {
+      const dirPath = joinPath(baseDir, "becomes-a-file");
+      await csMakeDir(dirPath);
+
+      const dir = await pickDirectory(dirPath);
+
+      await csRemove(dirPath);
+      await csWrite(dirPath, "now a plain file");
+
+      await rejectsWith(dir.getFileHandle("child.txt", { create: true }),
+                        "TypeMismatchError",
+                        "creating through a parent that is now a file");
+    });
+
     add_task(async function test_move_and_rename() {
       const dirPath = joinPath(baseDir, "moving");
       await csMakeDir(dirPath);

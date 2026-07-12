@@ -193,6 +193,49 @@
          "removeEntry succeeds after the writable is closed");
     });
 
+    add_task(async function test_live_swap_protected_from_dom_ops() {
+      const dirPath = joinPath(baseDir, "swapguard");
+      const path = joinPath(dirPath, "guarded.txt");
+      await csMakeDir(dirPath);
+      await csWrite(path, "guard me");
+
+      const dir = await pickDirectory(dirPath);
+      const file = await dir.getFileHandle("guarded.txt");
+      const other = await dir.getFileHandle("other.txt", { create: true });
+
+      const writable = await file.createWritable();
+      await writable.write("committed data");
+
+      await rejectsWith(dir.removeEntry("guarded.txt.crswap"),
+                        "TypeMismatchError",
+                        "removeEntry cannot address a live swap");
+      await rejectsWith(other.move("guarded.txt.crswap"),
+                        "TypeMismatchError",
+                        "rename cannot target a live swap name");
+
+      await writable.close();
+      is(await csRead(path), "committed data",
+         "the commit succeeds after the attempts on the swap");
+    });
+
+    add_task(async function test_crswap_directory_is_listed() {
+      const dirPath = joinPath(baseDir, "swapdir-visible");
+      await csMakeDir(dirPath);
+      await csMakeDir(joinPath(dirPath, "realdir.crswap"));
+      await csWrite(joinPath(dirPath, "plain.txt"), "x");
+      await csWrite(joinPath(dirPath, "stale.crswap"), "x");
+
+      const dir = await pickDirectory(dirPath);
+      const names = [];
+      for await (const name of dir.keys()) {
+        names.push(name);
+      }
+      ok(names.includes("realdir.crswap"),
+         "a directory named *.crswap is listed");
+      ok(names.includes("plain.txt"), "regular files are listed");
+      ok(!names.includes("stale.crswap"), "*.crswap files stay hidden");
+    });
+
     add_task(async function test_writable_on_missing_file() {
       const path = joinPath(baseDir, "gone-before-write.txt");
       await csWrite(path, "x");
@@ -223,15 +266,24 @@
       is(await csRead(path), "saved!", "save handle is writable");
     });
 
-    add_task(async function test_save_picker_existing_not_truncated() {
+    add_task(async function test_save_picker_truncates_existing() {
       const path = joinPath(baseDir, "existing-save.txt");
-      await csWrite(path, "do not truncate me");
+      await csWrite(path, "content the pick must clear");
 
       const handle = await pickSaveFile(path);
       is(handle.name, "existing-save.txt", "save handle name");
 
-      is(await csRead(path), "do not truncate me",
-         "existing save target is not truncated by the pick");
+      const stat = await csStat(path);
+      ok(stat.exists, "picked save target still exists on disk");
+      is(stat.size, 0, "existing save target is truncated by the pick");
+
+      // keepExistingData:true after a save pick seeds the swap with the
+      // cleared (empty) contents, so only the new bytes survive.
+      const writable = await handle.createWritable({ keepExistingData: true });
+      await writable.write("fresh bytes");
+      await writable.close();
+      is(await csRead(path), "fresh bytes",
+         "append-style writer after a save pick sees only the new bytes");
     });
   </script>
 </head>

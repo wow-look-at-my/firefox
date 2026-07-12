@@ -6,4 +6,6 @@
 
 ["browser_localFileSystemAccess_file_scheme.js"]
 
+["browser_localFileSystemAccess_private_browsing.js"]
+
 ["browser_localFileSystemAccess_real_ipc.js"]

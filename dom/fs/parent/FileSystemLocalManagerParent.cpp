@@ -67,9 +67,15 @@ Result<nsCOMPtr<nsIFile>, nsresult> ResolveLocalFile(
   return file;
 }
 
+// Swap file names are reserved so content cannot address a live swap through
+// child-name operations (Chromium reserves them the same way).
+bool IsReservedSwapName(const fs::Name& aName) {
+  return StringEndsWith(aName, u".crswap"_ns);
+}
+
 Result<nsCOMPtr<nsIFile>, nsresult> ResolveLocalChild(
     const fs::EntryId& aParentId, const fs::Name& aName) {
-  if (!fs::IsValidName(aName)) {
+  if (!fs::IsValidName(aName) || IsReservedSwapName(aName)) {
     return Err(NS_ERROR_DOM_TYPE_MISMATCH_ERR);
   }
 
@@ -102,15 +108,24 @@ nsresult TranslateFailure(nsresult aRv) {
       return NS_ERROR_DOM_INVALID_MODIFICATION_ERR;
     case NS_ERROR_FILE_READ_ONLY:
       return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR;
+    case NS_ERROR_FILE_DESTINATION_NOT_DIR:
+      return NS_ERROR_DOM_TYPE_MISMATCH_ERR;
     default:
       return aRv;
   }
 }
 
+// The filesystem root is the only canonical path ending in the separator, so
+// it needs no boundary separator after the prefix.
+bool EndsWithSeparator(const nsCString& aPath) {
+  return !aPath.IsEmpty() && aPath.Last() == kLocalPathSeparatorChar;
+}
+
 bool IsPathPrefix(const nsCString& aAncestor, const nsCString& aDescendant) {
   return aDescendant.Length() > aAncestor.Length() &&
          StringBeginsWith(aDescendant, aAncestor) &&
-         aDescendant.CharAt(aAncestor.Length()) == kLocalPathSeparatorChar;
+         (EndsWithSeparator(aAncestor) ||
+          aDescendant.CharAt(aAncestor.Length()) == kLocalPathSeparatorChar);
 }
 
 fs::FileSystemGetHandleResponse GetOrCreateEntry(
@@ -137,6 +152,13 @@ fs::FileSystemGetHandleResponse GetOrCreateEntry(
 
     if (isDirectory != aIsDirectory) {
       return fs::FileSystemGetHandleResponse(NS_ERROR_DOM_TYPE_MISMATCH_ERR);
+    }
+
+    if (!aIsDirectory && aRequest.truncate()) {
+      rv = child->SetFileSize(0);
+      if (NS_FAILED(rv)) {
+        return fs::FileSystemGetHandleResponse(TranslateFailure(rv));
+      }
     }
 
     return fs::FileSystemGetHandleResponse(IdFromFile(child));
@@ -212,6 +234,10 @@ nsresult CreateSwapFile(nsIFile* aTarget, const nsAString& aTargetLeaf,
 fs::FileSystemMoveEntryResponse MoveEntryImpl(nsIFile* aSource,
                                               nsIFile* aDestParent,
                                               const fs::Name& aDestName) {
+  if (IsReservedSwapName(aDestName)) {
+    return fs::FileSystemMoveEntryResponse(NS_ERROR_DOM_TYPE_MISMATCH_ERR);
+  }
+
   nsCOMPtr<nsIFile> dest;
   if (NS_FAILED(aDestParent->Clone(getter_AddRefs(dest))) ||
       NS_FAILED(dest->Append(aDestName))) {
@@ -342,9 +368,9 @@ IPCResult FileSystemLocalManagerParent::RecvGetAccessHandle(
     GetAccessHandleResolver&& aResolver) {
   AssertIsOnIOTarget();
 
-  // Sync access handles are restricted to OPFS; the child surfaces this as
-  // NotAllowedError.
-  aResolver(FileSystemGetAccessHandleResponse(NS_ERROR_FILE_ACCESS_DENIED));
+  // Sync access handles are restricted to OPFS; whatwg/fs and Chromium
+  // surface this as InvalidStateError.
+  aResolver(FileSystemGetAccessHandleResponse(NS_ERROR_DOM_INVALID_STATE_ERR));
 
   return IPC_OK();
 }
@@ -409,8 +435,19 @@ IPCResult FileSystemLocalManagerParent::RecvGetWritable(
   auto autoRemoveSwap = MakeScopeExit(
       [&swapFile] { (void)swapFile->Remove(/* aRecursive */ false); });
 
+  // The swap is locked like the target so DOM operations cannot remove or
+  // replace it while a stream writes into it.
+  const fs::EntryId swapId = IdFromFile(swapFile);
+  if (!FileSystemLocalLockTable::Get().LockShared(swapId)) {
+    reject(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+    return IPC_OK();
+  }
+
+  auto autoUnlockSwap = MakeScopeExit(
+      [&swapId] { FileSystemLocalLockTable::Get().UnlockShared(swapId); });
+
   if (LOG_ENABLED()) {
-    LOG(("Opening local Writable %s", IdFromFile(swapFile).get()));
+    LOG(("Opening local Writable %s", swapId.get()));
   }
 
   // Eagerly opened on purpose: a deferred open would ship an invalid file
@@ -430,12 +467,13 @@ IPCResult FileSystemLocalManagerParent::RecvGetWritable(
 
   auto writableFileStreamParent =
       MakeNotNull<RefPtr<FileSystemWritableFileStreamParent>>(
-          this, targetId, fs::FileId(IdFromFile(swapFile)),
+          this, targetId, fs::FileId(swapId),
           /* aIsExclusive */ false);
 
   // From here the actor owns the cleanup: a failed constructor send destroys
   // it and its ActorDestroy runs the abort path of OnWritableStreamClosed.
   autoRemoveSwap.release();
+  autoUnlockSwap.release();
   autoUnlock.release();
 
   if (!SendPFileSystemWritableFileStreamConstructor(writableFileStreamParent)) {
@@ -555,7 +593,8 @@ IPCResult FileSystemLocalManagerParent::RecvResolve(
   }
 
   fs::Path path;
-  uint32_t start = parentId.Length() + 1;
+  uint32_t start =
+      EndsWithSeparator(parentId) ? parentId.Length() : parentId.Length() + 1;
   const uint32_t length = childId.Length();
   for (uint32_t i = start; i <= length; ++i) {
     if (i == length || childId.CharAt(i) == kLocalPathSeparatorChar) {
@@ -608,13 +647,15 @@ IPCResult FileSystemLocalManagerParent::RecvGetEntries(
       continue;
     }
 
-    if (StringEndsWith(leafName, u".crswap"_ns)) {
-      continue;
-    }
-
     bool isDirectory = false;
     if (NS_FAILED(child->IsDirectory(&isDirectory))) {
       isDirectory = false;
+    }
+
+    // Swap files are hidden from listings; a user directory that happens to
+    // carry the suffix is not.
+    if (!isDirectory && StringEndsWith(leafName, u".crswap"_ns)) {
+      continue;
     }
 
     allEntries.AppendElement(
@@ -755,6 +796,10 @@ void FileSystemLocalManagerParent::OnWritableStreamClosed(
 
   auto autoUnlock = MakeScopeExit(
       [&aEntryId] { FileSystemLocalLockTable::Get().UnlockShared(aEntryId); });
+  auto autoUnlockSwap = MakeScopeExit([&aTemporaryFileId] {
+    FileSystemLocalLockTable::Get().UnlockShared(
+        fs::EntryId(aTemporaryFileId.Value()));
+  });
 
   auto swapOrErr = ResolveLocalFile(fs::EntryId(aTemporaryFileId.Value()));
   if (NS_WARN_IF(swapOrErr.isErr())) {

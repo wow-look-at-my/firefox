@@ -197,7 +197,12 @@ void FilePickerParent::Done(nsIFilePicker::ResultCode aResult) {
     nsTArray<nsCOMPtr<nsIFile>> files;
     if (mMode == nsIFilePicker::modeOpenMultiple) {
       nsCOMPtr<nsISimpleEnumerator> iter;
-      NS_ENSURE_SUCCESS_VOID(mFilePicker->GetFiles(getter_AddRefs(iter)));
+      if (NS_WARN_IF(NS_FAILED(mFilePicker->GetFiles(getter_AddRefs(iter))))) {
+        // Returning without Send__delete__ would leave the content promise
+        // pending forever; fail the pick instead.
+        (void)Send__delete__(this, void_t(), nsIFilePicker::returnCancel);
+        return;
+      }
 
       nsCOMPtr<nsISupports> supports;
       bool loop = true;
@@ -205,8 +210,9 @@ void FilePickerParent::Done(nsIFilePicker::ResultCode aResult) {
         iter->GetNext(getter_AddRefs(supports));
         if (supports) {
           nsCOMPtr<nsIFile> file = do_QueryInterface(supports);
-          MOZ_ASSERT(file);
-          files.AppendElement(file);
+          if (file) {
+            files.AppendElement(file);
+          }
         }
       }
     } else {
@@ -329,8 +335,7 @@ mozilla::ipc::IPCResult FilePickerParent::RecvOpen(
     nsTArray<nsString>&& aFilters, nsTArray<nsString>&& aFilterNames,
     nsTArray<nsString>&& aRawFilters, const nsString& aDisplayDirectory,
     const nsString& aDisplaySpecialDirectory, const nsString& aOkButtonLabel,
-    const nsIFilePicker::CaptureTarget& aCapture,
-    const bool& aRawPathResults) {
+    const nsIFilePicker::CaptureTarget& aCapture, const bool& aRawPathResults) {
   if (!CreateFilePicker()) {
     (void)Send__delete__(this, void_t(), nsIFilePicker::returnCancel);
     return IPC_OK();

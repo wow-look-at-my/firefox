@@ -52,8 +52,10 @@
       is(await file.text(), "picker smoke content",
          "getFile reads the real file content");
 
-      await rejectsWith(window.showOpenFilePicker(), "SecurityError",
-                        "user activation is consumed per call");
+      // A successful pick performs the activation notification steps, so a
+      // chained picker call works without a new gesture (Chromium parity).
+      const chained = await window.showOpenFilePicker();
+      is(chained.length, 1, "successful pick re-arms user activation");
     });
 
     add_task(async function test_save_file_picker() {
@@ -64,8 +66,11 @@
       is(handle.kind, "file", "save picker returns a file handle");
       is(handle.name, "saved.txt", "handle name matches picked file");
 
-      is(await csRead(path), "existing save content",
-         "save pick does not truncate an existing file");
+      // WICG spec: the existing file is cleared before the method returns.
+      is(await csRead(path), "",
+         "save pick truncates an existing file to 0 bytes");
+      is((await handle.getFile()).size, 0,
+         "getFile after a save pick sees the cleared file");
     });
 
     add_task(async function test_directory_picker() {
@@ -104,6 +109,33 @@
          "local handles support structured cloning");
       is(await (await clone.getFile()).text(), "clone",
          "cloned local handle reads from disk");
+    });
+
+    add_task(async function test_invalid_accept_types_reject() {
+      const path = joinPath(baseDir, "after-typeerror.txt");
+      await csWrite(path, "still armed");
+      MockFilePicker.setFiles([path]);
+      MockFilePicker.returnValue = MockFilePicker.returnOK;
+
+      armActivation();
+
+      await rejectsWith(
+        window.showOpenFilePicker({
+          types: [{ accept: { "text/plain": ["txt"] } }],
+        }),
+        "TypeError",
+        "accept extension without a leading dot");
+      await rejectsWith(
+        window.showSaveFilePicker({ excludeAcceptAllOption: true }),
+        "TypeError",
+        "excludeAcceptAllOption without accept types");
+
+      // The TypeErrors are thrown before activation is consumed, so a valid
+      // pick still works without re-arming the gesture.
+      const handles = await window.showOpenFilePicker({
+        types: [{ description: "Text", accept: { "text/plain": [".txt"] } }],
+      });
+      is(handles.length, 1, "TypeError paths do not consume user activation");
     });
   </script>
 </head>

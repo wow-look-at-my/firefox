@@ -22,6 +22,7 @@
 #include "nsIFile.h"
 #include "nsIFilePicker.h"
 #include "nsISimpleEnumerator.h"
+#include "nsPrintfCString.h"
 #include "nsString.h"
 
 namespace mozilla::dom::fs {
@@ -92,6 +93,15 @@ NS_IMETHODIMP LocalFileSystemPickerCallback::Done(
   RefPtr<FileSystemManager> manager =
       storageManager->GetLocalFileSystemManager();
 
+  // Spec: every picker algorithm performs the activation notification steps
+  // after a successful selection, so a site can chain another activation
+  // gated call without a new gesture.
+  if (nsPIDOMWindowInner* window = global->GetAsInnerWindow()) {
+    if (RefPtr<Document> doc = window->GetExtantDoc()) {
+      doc->NotifyUserGestureActivation();
+    }
+  }
+
   if (mKind == PickerKind::Open && mMultiple) {
     nsCOMPtr<nsISimpleEnumerator> iter;
     if (NS_WARN_IF(NS_FAILED(mFilePicker->GetFiles(getter_AddRefs(iter))))) {
@@ -107,7 +117,9 @@ NS_IMETHODIMP LocalFileSystemPickerCallback::Done(
       iter->GetNext(getter_AddRefs(supports));
       if (supports) {
         nsCOMPtr<nsIFile> file = do_QueryInterface(supports);
-        MOZ_ASSERT(file);
+        if (!file) {
+          continue;
+        }
 
         RefPtr<FileSystemFileHandle> handle =
             MintHandle<FileSystemFileHandle>(global, manager, file,
@@ -149,8 +161,9 @@ NS_IMETHODIMP LocalFileSystemPickerCallback::Done(
 
   if (mKind == PickerKind::Save) {
     // The parent is the minting authority for the save case: the round trip
-    // creates the picked file on disk (0 bytes) when it is missing and leaves
-    // existing content untouched.
+    // creates the picked file on disk (0 bytes) when it is missing and
+    // truncates an existing file to 0 bytes, per the WICG spec ("set entry's
+    // binary data to an empty byte sequence") and Chromium.
     nsCOMPtr<nsIFile> parentDir;
     nsAutoString leafName;
     nsAutoString parentPath;
@@ -168,7 +181,7 @@ NS_IMETHODIMP LocalFileSystemPickerCallback::Done(
     FileSystemRequestHandler{}.GetFileHandle(
         manager,
         FileSystemChildMetadata(NS_ConvertUTF16toUTF8(parentPath), leafName),
-        /* aCreate */ true, mPromise, rv);
+        /* aCreate */ true, /* aTruncate */ true, mPromise, rv);
     if (NS_WARN_IF(rv.Failed())) {
       mPromise->MaybeRejectWithUnknownError(
           "Failed to request the save target.");
@@ -232,37 +245,66 @@ already_AddRefed<nsIFilePicker> CreatePicker(nsGlobalWindowInner* aWindow,
   return filePicker.forget();
 }
 
+void CollectAcceptExtensions(const FilePickerAcceptType& aType,
+                             nsTArray<nsString>& aExtensions) {
+  if (!aType.mAccept.WasPassed()) {
+    return;
+  }
+
+  for (const auto& entry : aType.mAccept.Value().Entries()) {
+    if (entry.mValue.IsUSVString()) {
+      aExtensions.AppendElement(entry.mValue.GetAsUSVString());
+    } else {
+      aExtensions.AppendElements(entry.mValue.GetAsUSVStringSequence());
+    }
+  }
+}
+
+// WICG "process accept types": invalid options throw a TypeError, and they
+// must do so before any user activation is consumed (Chromium ordering).
+bool ValidateAcceptTypes(const Optional<Sequence<FilePickerAcceptType>>& aTypes,
+                         bool aExcludeAcceptAllOption, ErrorResult& aError) {
+  if (aTypes.WasPassed()) {
+    for (const FilePickerAcceptType& type : aTypes.Value()) {
+      nsTArray<nsString> extensions;
+      CollectAcceptExtensions(type, extensions);
+
+      for (const nsString& extension : extensions) {
+        if (extension.Length() < 2 || extension.First() != u'.') {
+          aError.ThrowTypeError(nsPrintfCString(
+              "Invalid extension '%s'; extensions must start with '.'.",
+              NS_ConvertUTF16toUTF8(extension).get()));
+          return false;
+        }
+      }
+    }
+  }
+
+  if (aExcludeAcceptAllOption &&
+      (!aTypes.WasPassed() || aTypes.Value().IsEmpty())) {
+    aError.ThrowTypeError(
+        "excludeAcceptAllOption requires at least one accept type.");
+    return false;
+  }
+
+  return true;
+}
+
 void ApplyAcceptFilters(nsIFilePicker* aFilePicker,
                         const Optional<Sequence<FilePickerAcceptType>>& aTypes,
                         bool aExcludeAcceptAllOption) {
   if (aTypes.WasPassed()) {
     for (const FilePickerAcceptType& type : aTypes.Value()) {
-      if (!type.mAccept.WasPassed()) {
-        continue;
-      }
+      nsTArray<nsString> extensions;
+      CollectAcceptExtensions(type, extensions);
 
       nsAutoString filter;
-      for (const auto& entry : type.mAccept.Value().Entries()) {
-        AutoTArray<nsString, 4> extensions;
-        if (entry.mValue.IsUSVString()) {
-          extensions.AppendElement(entry.mValue.GetAsUSVString());
-        } else {
-          extensions.AppendElements(entry.mValue.GetAsUSVStringSequence());
+      for (const nsString& extension : extensions) {
+        if (!filter.IsEmpty()) {
+          filter.AppendLiteral("; ");
         }
-
-        for (const nsString& extension : extensions) {
-          // WICG extension strings are required to start with a dot; skip
-          // anything else instead of producing a bogus native filter.
-          if (extension.Length() < 2 || extension.First() != u'.') {
-            continue;
-          }
-
-          if (!filter.IsEmpty()) {
-            filter.AppendLiteral("; ");
-          }
-          filter.Append(u'*');
-          filter.Append(extension);
-        }
+        filter.Append(u'*');
+        filter.Append(extension);
       }
 
       if (!filter.IsEmpty()) {
@@ -277,6 +319,26 @@ void ApplyAcceptFilters(nsIFilePicker* aFilePicker,
 
   if (!aExcludeAcceptAllOption) {
     aFilePicker->AppendFilters(nsIFilePicker::filterAll);
+  }
+}
+
+// Chromium derives the save dialog's default extension from the first accept
+// extension.
+void ApplyDefaultExtension(
+    nsIFilePicker* aFilePicker,
+    const Optional<Sequence<FilePickerAcceptType>>& aTypes) {
+  if (!aTypes.WasPassed()) {
+    return;
+  }
+
+  for (const FilePickerAcceptType& type : aTypes.Value()) {
+    nsTArray<nsString> extensions;
+    CollectAcceptExtensions(type, extensions);
+
+    if (!extensions.IsEmpty()) {
+      aFilePicker->SetDefaultExtension(Substring(extensions[0], 1));
+      return;
+    }
   }
 }
 
@@ -359,6 +421,11 @@ already_AddRefed<Promise> OpenPicker(nsGlobalWindowInner* aWindow,
 already_AddRefed<Promise> LocalFileSystemAccessHandler::ShowOpenFilePicker(
     nsGlobalWindowInner* aWindow, const OpenFilePickerOptions& aOptions,
     ErrorResult& aError) {
+  if (!ValidateAcceptTypes(aOptions.mTypes, aOptions.mExcludeAcceptAllOption,
+                           aError)) {
+    return nullptr;
+  }
+
   const nsIFilePicker::Mode mode = aOptions.mMultiple
                                        ? nsIFilePicker::modeOpenMultiple
                                        : nsIFilePicker::modeOpen;
@@ -381,14 +448,20 @@ already_AddRefed<Promise> LocalFileSystemAccessHandler::ShowOpenFilePicker(
 already_AddRefed<Promise> LocalFileSystemAccessHandler::ShowSaveFilePicker(
     nsGlobalWindowInner* aWindow, const SaveFilePickerOptions& aOptions,
     ErrorResult& aError) {
-  nsCOMPtr<nsIFilePicker> filePicker =
-      CreatePicker(aWindow, nsIFilePicker::modeSave, "FileUpload", aError);
+  if (!ValidateAcceptTypes(aOptions.mTypes, aOptions.mExcludeAcceptAllOption,
+                           aError)) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIFilePicker> filePicker = CreatePicker(
+      aWindow, nsIFilePicker::modeSave, "SaveFilePickerTitle", aError);
   if (!filePicker) {
     return nullptr;
   }
 
   ApplyAcceptFilters(filePicker, aOptions.mTypes,
                      aOptions.mExcludeAcceptAllOption);
+  ApplyDefaultExtension(filePicker, aOptions.mTypes);
   ApplyStartIn(filePicker, aOptions.mStartIn);
 
   if (aOptions.mSuggestedName.WasPassed() &&
@@ -406,7 +479,7 @@ already_AddRefed<Promise> LocalFileSystemAccessHandler::ShowDirectoryPicker(
     nsGlobalWindowInner* aWindow, const DirectoryPickerOptions& aOptions,
     ErrorResult& aError) {
   nsCOMPtr<nsIFilePicker> filePicker = CreatePicker(
-      aWindow, nsIFilePicker::modeGetFolder, "DirectoryUpload", aError);
+      aWindow, nsIFilePicker::modeGetFolder, "DirectoryPickerTitle", aError);
   if (!filePicker) {
     return nullptr;
   }

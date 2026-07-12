@@ -55,6 +55,9 @@ void HandleFailedStatus(nsresult aError, const RefPtr<Promise>& aPromise) {
     case NS_ERROR_DOM_TYPE_MISMATCH_ERR:
       aPromise->MaybeRejectWithTypeMismatchError("Wrong type");
       break;
+    case NS_ERROR_DOM_INVALID_STATE_ERR:
+      aPromise->MaybeRejectWithInvalidStateError("Invalid state");
+      break;
     case NS_ERROR_DOM_INVALID_MODIFICATION_ERR:
       aPromise->MaybeRejectWithInvalidModificationError("Invalid modification");
       break;
@@ -363,7 +366,8 @@ void FileSystemRequestHandler::GetDirectoryHandle(
   }
 
   aManager->BeginRequest(
-      [request = FileSystemGetHandleRequest(aDirectory, aCreate),
+      [request = FileSystemGetHandleRequest(aDirectory, aCreate,
+                                            /* truncate */ false),
        onResolve = SelectResolveCallback<FileSystemGetHandleResponse,
                                          RefPtr<FileSystemDirectoryHandle>>(
            aPromise, aDirectory.childName(), aManager),
@@ -376,7 +380,7 @@ void FileSystemRequestHandler::GetDirectoryHandle(
 
 void FileSystemRequestHandler::GetFileHandle(
     RefPtr<FileSystemManager>& aManager, const FileSystemChildMetadata& aFile,
-    bool aCreate,
+    bool aCreate, bool aTruncate,
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
     ErrorResult& aError) {
   MOZ_ASSERT(aManager);
@@ -395,7 +399,7 @@ void FileSystemRequestHandler::GetFileHandle(
   }
 
   aManager->BeginRequest(
-      [request = FileSystemGetHandleRequest(aFile, aCreate),
+      [request = FileSystemGetHandleRequest(aFile, aCreate, aTruncate),
        onResolve = SelectResolveCallback<FileSystemGetHandleResponse,
                                          RefPtr<FileSystemFileHandle>>(
            aPromise, aFile.childName(), aManager),
