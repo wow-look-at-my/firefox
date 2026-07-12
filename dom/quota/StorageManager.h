@@ -38,6 +38,8 @@ class StorageManager final : public nsISupports, public nsWrapperCache {
 
   already_AddRefed<FileSystemManager> GetFileSystemManager();
 
+  already_AddRefed<FileSystemManager> GetLocalFileSystemManager();
+
   // WebIDL Boilerplate
   nsIGlobalObject* GetParentObject() const { return mGlobal; }
 
@@ -57,6 +59,8 @@ class StorageManager final : public nsISupports, public nsWrapperCache {
   ~StorageManager();
 
   RefPtr<FileSystemManager> mFileSystemManager;
+
+  RefPtr<FileSystemManager> mLocalFileSystemManager;
 };
 
 }  // namespace dom

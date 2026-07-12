@@ -4,6 +4,7 @@
 
 #include "FileSystemFileHandle.h"
 
+#include "fs/FileSystemConstants.h"
 #include "fs/FileSystemRequestHandler.h"
 #include "js/StructuredClone.h"
 #include "js/TypeDecls.h"
@@ -104,12 +105,15 @@ FileSystemFileHandle::ReadStructuredClone(JSContext* aCx,
     return nullptr;
   }
 
+  const bool isLocal = (kind & fs::kLocalFileSystemHandleKindFlag) != 0;
+  kind &= ~fs::kLocalFileSystemHandleKindFlag;
+
   if (kind != static_cast<uint32_t>(FileSystemHandleKind::File)) {
     return nullptr;
   }
 
   RefPtr<FileSystemFileHandle> result =
-      FileSystemHandle::ConstructFileHandle(aCx, aGlobal, aReader);
+      FileSystemHandle::ConstructFileHandle(aCx, aGlobal, aReader, isLocal);
   if (!result) {
     return nullptr;
   }

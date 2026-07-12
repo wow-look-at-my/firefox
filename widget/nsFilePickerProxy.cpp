@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsFilePickerProxy.h"
+#include "nsArrayEnumerator.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIFile.h"
 #include "nsSimpleEnumerator.h"
@@ -106,7 +107,15 @@ nsFilePickerProxy::SetFilterIndex(int32_t aFilterIndex) {
 
 NS_IMETHODIMP
 nsFilePickerProxy::GetFile(nsIFile** aFile) {
-  MOZ_ASSERT(false, "GetFile is unimplemented; use GetDomFileOrDirectory");
+  if (!mRawPaths.IsEmpty()) {
+    nsCOMPtr<nsIFile> file;
+    nsresult rv = NS_NewLocalFile(mRawPaths[0], getter_AddRefs(file));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    file.forget(aFile);
+    return NS_OK;
+  }
+
   return NS_ERROR_FAILURE;
 }
 
@@ -118,8 +127,19 @@ nsFilePickerProxy::GetFileURL(nsIURI** aFileURL) {
 
 NS_IMETHODIMP
 nsFilePickerProxy::GetFiles(nsISimpleEnumerator** aFiles) {
-  MOZ_ASSERT(false,
-             "GetFiles is unimplemented; use GetDomFileOrDirectoryEnumerator");
+  if (!mRawPaths.IsEmpty()) {
+    nsCOMArray<nsIFile> files;
+    for (const nsString& path : mRawPaths) {
+      nsCOMPtr<nsIFile> file;
+      nsresult rv = NS_NewLocalFile(path, getter_AddRefs(file));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      files.AppendObject(file);
+    }
+
+    return NS_NewArrayEnumerator(aFiles, files, NS_GET_IID(nsIFile));
+  }
+
   return NS_ERROR_FAILURE;
 }
 
@@ -138,7 +158,8 @@ nsFilePickerProxy::Open(nsIFilePickerShownCallback* aCallback) {
 
   SendOpen(mSelectedType, mAddToRecentDocs, mDefault, mDefaultExtension,
            mFilters, mFilterNames, mRawFilters, displayDirectory,
-           mDisplaySpecialDirectory, mOkButtonLabel, mCapture);
+           mDisplaySpecialDirectory, mOkButtonLabel, mCapture,
+           mRawPathResults);
 
   return NS_OK;
 }
@@ -168,6 +189,8 @@ mozilla::ipc::IPCResult nsFilePickerProxy::Recv__delete__(
       OwningFileOrDirectory* element = mFilesOrDirectories.AppendElement();
       element->SetAsFile() = file;
     }
+  } else if (aData.type() == MaybeInputData::TInputPaths) {
+    mRawPaths = aData.get_InputPaths().paths().Clone();
   } else if (aData.type() == MaybeInputData::TInputDirectory) {
     nsCOMPtr<nsIFile> file;
     const nsAString& path(aData.get_InputDirectory().directoryPath());

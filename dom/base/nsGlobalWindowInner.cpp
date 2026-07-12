@@ -123,6 +123,7 @@
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/External.h"
 #include "mozilla/dom/Fetch.h"
+#include "mozilla/dom/FileSystemAccessBinding.h"
 #include "mozilla/dom/Gamepad.h"
 #include "mozilla/dom/GamepadHandle.h"
 #include "mozilla/dom/GamepadManager.h"
@@ -135,6 +136,7 @@
 #include "mozilla/dom/IntlUtils.h"
 #include "mozilla/dom/JSExecutionUtils.h"  // mozilla::dom::Compile, mozilla::dom::EvaluationExceptionToNSResult
 #include "mozilla/dom/LSObject.h"
+#include "mozilla/dom/LocalFileSystemAccessHandler.h"
 #include "mozilla/dom/LocalStorage.h"
 #include "mozilla/dom/LocalStorageCommon.h"
 #include "mozilla/dom/Location.h"
@@ -7412,6 +7414,24 @@ already_AddRefed<Promise> nsGlobalWindowInner::PromiseDocumentFlushed(
 
   mDocumentFlushedResolvers.AppendElement(std::move(flushResolver));
   return resultPromise.forget();
+}
+
+already_AddRefed<Promise> nsGlobalWindowInner::ShowOpenFilePicker(
+    const OpenFilePickerOptions& aOptions, ErrorResult& aError) {
+  return fs::LocalFileSystemAccessHandler::ShowOpenFilePicker(this, aOptions,
+                                                              aError);
+}
+
+already_AddRefed<Promise> nsGlobalWindowInner::ShowSaveFilePicker(
+    const SaveFilePickerOptions& aOptions, ErrorResult& aError) {
+  return fs::LocalFileSystemAccessHandler::ShowSaveFilePicker(this, aOptions,
+                                                              aError);
+}
+
+already_AddRefed<Promise> nsGlobalWindowInner::ShowDirectoryPicker(
+    const DirectoryPickerOptions& aOptions, ErrorResult& aError) {
+  return fs::LocalFileSystemAccessHandler::ShowDirectoryPicker(this, aOptions,
+                                                               aError);
 }
 
 bool nsGlobalWindowInner::TryToObserveRefresh() {

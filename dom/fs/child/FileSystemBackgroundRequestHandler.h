@@ -46,7 +46,7 @@ class FileSystemBackgroundRequestHandler {
 
   virtual RefPtr<FileSystemManagerChild::ActorPromise>
   CreateFileSystemManagerChild(
-      const mozilla::ipc::PrincipalInfo& aPrincipalInfo);
+      const mozilla::ipc::PrincipalInfo& aPrincipalInfo, bool aLocal = false);
 
  protected:
   virtual ~FileSystemBackgroundRequestHandler();

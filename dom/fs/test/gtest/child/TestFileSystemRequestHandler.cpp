@@ -199,8 +199,8 @@ TEST_F(TestFileSystemRequestHandler, isGetFileHandleSuccessful) {
 
   RefPtr<Promise> promise = GetDefaultPromise();
   auto testable = GetFileSystemRequestHandler();
-  testable->GetFileHandle(mManager, mChild, /* create */ true, promise,
-                          IgnoredErrorResult());
+  testable->GetFileHandle(mManager, mChild, /* create */ true,
+                          /* truncate */ false, promise, IgnoredErrorResult());
   SpinEventLoopUntil("Promise is fulfilled or timeout"_ns,
                      [this]() { return mListener->IsDone(); });
 }
@@ -209,8 +209,10 @@ TEST_F(TestFileSystemRequestHandler, isGetFileHandleBlockedAfterShutdown) {
   ASSERT_NO_FATAL_FAILURE(ShutdownFileSystemManager());
 
   IgnoredErrorResult error;
-  GetFileSystemRequestHandler()->GetFileHandle(
-      mManager, mChild, /* aCreate */ true, GetSimplePromise(), error);
+  GetFileSystemRequestHandler()->GetFileHandle(mManager, mChild,
+                                               /* aCreate */ true,
+                                               /* aTruncate */ false,
+                                               GetSimplePromise(), error);
 
   ASSERT_TRUE(error.Failed());
   ASSERT_TRUE(error.ErrorCodeIs(NS_ERROR_ILLEGAL_DURING_SHUTDOWN));

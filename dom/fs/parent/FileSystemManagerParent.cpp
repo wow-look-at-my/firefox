@@ -37,6 +37,9 @@ FileSystemManagerParent::FileSystemManagerParent(
     const EntryId& aRootEntry)
     : mDataManager(std::move(aDataManager)), mRootResponse(aRootEntry) {}
 
+FileSystemManagerParent::FileSystemManagerParent()
+    : mRootResponse(NS_ERROR_NOT_IMPLEMENTED) {}
+
 FileSystemManagerParent::~FileSystemManagerParent() {
   LOG(("Destroying FileSystemManagerParent %p", this));
   MOZ_ASSERT(!mRegistered);
@@ -480,6 +483,16 @@ IPCResult FileSystemManagerParent::RecvRenameEntry(
   fs::FileSystemMoveEntryResponse response(newId);
   aResolver(response);
   return IPC_OK();
+}
+
+void FileSystemManagerParent::OnWritableStreamClosed(
+    const fs::EntryId& aEntryId, const fs::FileId& aTemporaryFileId,
+    bool aIsExclusive, bool aAbort) {
+  if (aIsExclusive) {
+    DataManagerStrongRef()->UnlockExclusive(aEntryId);
+  } else {
+    DataManagerStrongRef()->UnlockShared(aEntryId, aTemporaryFileId, aAbort);
+  }
 }
 
 void FileSystemManagerParent::RequestAllowToClose() {

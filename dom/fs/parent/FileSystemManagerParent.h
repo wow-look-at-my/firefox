@@ -6,6 +6,7 @@
 #define DOM_FS_PARENT_FILESYSTEMMANAGERPARENT_H_
 
 #include "ErrorList.h"
+#include "mozilla/dom/FileSystemParentTypes.h"
 #include "mozilla/dom/FlippedOnce.h"
 #include "mozilla/dom/PFileSystemManagerParent.h"
 #include "mozilla/dom/quota/ConditionalCompilation.h"
@@ -24,54 +25,64 @@ class FileSystemManagerParent : public PFileSystemManagerParent {
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(FileSystemManagerParent, override)
 
-  void AssertIsOnIOTarget() const;
+  virtual void AssertIsOnIOTarget() const;
 
-  bool IsAlive() const;
+  virtual bool IsAlive() const;
 
   // Safe to call while the actor is live.
   const RefPtr<fs::data::FileSystemDataManager>& DataManagerStrongRef() const;
 
   void SetRegistered(bool aRegistered) { mRegistered = aRegistered; }
 
-  mozilla::ipc::IPCResult RecvGetRootHandle(GetRootHandleResolver&& aResolver);
+  virtual mozilla::ipc::IPCResult RecvGetRootHandle(
+      GetRootHandleResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetDirectoryHandle(
+  virtual mozilla::ipc::IPCResult RecvGetDirectoryHandle(
       FileSystemGetHandleRequest&& aRequest,
       GetDirectoryHandleResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetFileHandle(
+  virtual mozilla::ipc::IPCResult RecvGetFileHandle(
       FileSystemGetHandleRequest&& aRequest, GetFileHandleResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetAccessHandle(
+  virtual mozilla::ipc::IPCResult RecvGetAccessHandle(
       FileSystemGetAccessHandleRequest&& aRequest,
       GetAccessHandleResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetWritable(
+  virtual mozilla::ipc::IPCResult RecvGetWritable(
       FileSystemGetWritableRequest&& aRequest, GetWritableResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetFile(FileSystemGetFileRequest&& aRequest,
-                                      GetFileResolver&& aResolver);
+  virtual mozilla::ipc::IPCResult RecvGetFile(
+      FileSystemGetFileRequest&& aRequest, GetFileResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvResolve(FileSystemResolveRequest&& aRequest,
-                                      ResolveResolver&& aResolver);
+  virtual mozilla::ipc::IPCResult RecvResolve(
+      FileSystemResolveRequest&& aRequest, ResolveResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetEntries(FileSystemGetEntriesRequest&& aRequest,
-                                         GetEntriesResolver&& aResolver);
+  virtual mozilla::ipc::IPCResult RecvGetEntries(
+      FileSystemGetEntriesRequest&& aRequest, GetEntriesResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvRemoveEntry(
+  virtual mozilla::ipc::IPCResult RecvRemoveEntry(
       FileSystemRemoveEntryRequest&& aRequest, RemoveEntryResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvMoveEntry(FileSystemMoveEntryRequest&& aRequest,
-                                        MoveEntryResolver&& aResolver);
+  virtual mozilla::ipc::IPCResult RecvMoveEntry(
+      FileSystemMoveEntryRequest&& aRequest, MoveEntryResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvRenameEntry(
+  virtual mozilla::ipc::IPCResult RecvRenameEntry(
       FileSystemRenameEntryRequest&& aRequest, MoveEntryResolver&& aResolver);
 
-  void RequestAllowToClose();
+  // Called by FileSystemWritableFileStreamParent when its stream is closed;
+  // releases the lock held for the stream and finalizes or discards the
+  // written data.
+  virtual void OnWritableStreamClosed(const fs::EntryId& aEntryId,
+                                      const fs::FileId& aTemporaryFileId,
+                                      bool aIsExclusive, bool aAbort);
+
+  virtual void RequestAllowToClose();
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
  protected:
+  FileSystemManagerParent();
+
   virtual ~FileSystemManagerParent();
 
  private:

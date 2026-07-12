@@ -132,6 +132,9 @@ class VoidFunction;
 class VRDisplay;
 enum class VRDisplayEventReason : uint8_t;
 class VREventObserver;
+struct DirectoryPickerOptions;
+struct OpenFilePickerOptions;
+struct SaveFilePickerOptions;
 struct WindowPostMessageOptions;
 class Worklet;
 namespace cache {
@@ -934,6 +937,18 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   already_AddRefed<mozilla::dom::Promise> PromiseDocumentFlushed(
       mozilla::dom::PromiseDocumentFlushedCallback& aCallback,
+      mozilla::ErrorResult& aError);
+
+  already_AddRefed<mozilla::dom::Promise> ShowOpenFilePicker(
+      const mozilla::dom::OpenFilePickerOptions& aOptions,
+      mozilla::ErrorResult& aError);
+
+  already_AddRefed<mozilla::dom::Promise> ShowSaveFilePicker(
+      const mozilla::dom::SaveFilePickerOptions& aOptions,
+      mozilla::ErrorResult& aError);
+
+  already_AddRefed<mozilla::dom::Promise> ShowDirectoryPicker(
+      const mozilla::dom::DirectoryPickerOptions& aOptions,
       mozilla::ErrorResult& aError);
 
   void GetInterface(JSContext* aCx, JS::Handle<JS::Value> aIID,
