@@ -1,0 +1,170 @@
+name: Build
+
+on:
+  push:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  all-builds:
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      MOZCONFIG: ${{ github.workspace }}/.github/mozconfigs/macos-arm64-opt
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: System diagnostics
+        run: |
+          df -h
+          sw_vers
+          sysctl hw.ncpu hw.memsize
+          python3 --version
+          xcodebuild -version
+
+      - name: Pin Rust
+        run: rustup toolchain install 1.96.0 --profile minimal && rustup default 1.96.0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.mozbuild
+          key: mozbuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('taskcluster/kinds/toolchain/**') }}
+          restore-keys: |
+            mozbuild-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Bootstrap
+        run: ./mach --no-interactive bootstrap --application-choice browser --no-system-changes
+
+      - name: Configure
+        run: ./mach configure
+
+      - name: Build
+        run: ./mach build
+
+      - name: Package
+        run: for i in 1 2 3; do ./mach package && break; [ $i -eq 3 ] && exit 1; echo "mach package failed (attempt $i), retrying"; sleep 30; done
+
+      - name: List dist
+        run: ls -la obj-build/dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firefox-macos-arm64
+          path: obj-build/dist/*.dmg
+          if-no-files-found: error
+
+      - name: Publish to buildhost
+        uses: wow-look-at-my/actions@typescript#latest
+        with:
+          script: |
+            const server = 'https://pazer.build';
+            const project = 'firefox';
+            const targetOs = 'darwin';
+            const targetArch = 'arm64';
+            const branch = github.ref_name;
+
+            const distDir = path.join(env.GITHUB_WORKSPACE, 'obj-build', 'dist');
+            const dmgName = fs.readdirSync(distDir).find((f) => f.endsWith('.dmg'));
+            if (!dmgName) throw new Error(`no .dmg found in ${distDir}`);
+            const data = fs.readFileSync(path.join(distDir, dmgName));
+            const sha256 = require('crypto').createHash('sha256').update(data).digest('hex');
+            core.info(`Publishing ${dmgName} (${data.length} bytes, sha256 ${sha256}) to ${server} as ${project} ${targetOs}/${targetArch}, branch ${branch}`);
+
+            let token = await core.getIDToken(server);
+            core.setSecret(token);
+
+            const api = async (method: string, urlPath: string, body?: Buffer | string, extra?: Record<string, string>) => {
+              const headers: Record<string, string> = { Authorization: `Bearer ${token}`, ...(extra || {}) };
+              let refreshed = false;
+              for (let attempt = 1; ; attempt++) {
+                let status = 0;
+                let text = '';
+                try {
+                  const resp = await fetch(`${server}${urlPath}`, { method, headers, body });
+                  status = resp.status;
+                  text = await resp.text();
+                  if ((status === 401 || status === 403) && !refreshed) {
+                    refreshed = true;
+                    token = await core.getIDToken(server);
+                    core.setSecret(token);
+                    headers.Authorization = `Bearer ${token}`;
+                    continue;
+                  }
+                  if (status < 500 && !(status === 404 && text.trim() === '')) return { status, text };
+                } catch (e) {
+                  text = e instanceof Error ? e.message : String(e);
+                }
+                if (attempt >= 4) return { status, text };
+                core.warning(`${method} ${urlPath} -> HTTP ${status} (attempt ${attempt}/4); retrying`);
+                await new Promise((r) => setTimeout(r, 2000 * attempt));
+              }
+            };
+
+            const octet = { 'Content-Type': 'application/octet-stream' };
+
+            const infoResp = await api('GET', '/api/v1/server-info');
+            const maxDirect = infoResp.status === 200 ? Number(JSON.parse(infoResp.text).max_direct_upload_bytes) || 0 : 0;
+
+            const relResp = await api('POST', `/api/v1/projects/${project}/releases`,
+              JSON.stringify({ git_branch: branch, git_commit: github.sha }), { 'Content-Type': 'application/json' });
+            if (relResp.status !== 201) throw new Error(`create release failed (HTTP ${relResp.status}): ${relResp.text}`);
+            const version = JSON.parse(relResp.text).version;
+            core.info(`Created release ${project}/${version}`);
+
+            const artifactUrl = `/api/v1/projects/${project}/releases/${version}/artifacts/${targetOs}/${targetArch}`;
+            let uploadResp = { status: 0, text: 'not attempted' };
+            if (data.length <= maxDirect) {
+              uploadResp = await api('PUT', `${artifactUrl}?kind=archive`, data, { ...octet, 'X-Artifact-Filename': dmgName });
+            } else {
+              const sessResp = await api('POST', '/api/v1/uploads');
+              if (sessResp.status !== 201) throw new Error(`create upload session failed (HTTP ${sessResp.status}): ${sessResp.text}`);
+              const sessionId = JSON.parse(sessResp.text).id;
+              const chunkSize = 64 * 1024 * 1024;
+              let offset = 0;
+              let resyncs = 0;
+              while (offset < data.length) {
+                const end = Math.min(offset + chunkSize, data.length);
+                const r = await api('PATCH', `/api/v1/uploads/${sessionId}?offset=${offset}`, data.subarray(offset, end), octet);
+                if (r.status === 200) {
+                  offset = Number(JSON.parse(r.text).size);
+                  resyncs = 0;
+                  core.info(`Uploaded ${offset}/${data.length} bytes`);
+                  continue;
+                }
+                if ((r.status === 409 || r.status === 0) && ++resyncs <= 5) {
+                  const s = await api('GET', `/api/v1/uploads/${sessionId}`);
+                  if (s.status === 200) {
+                    offset = Number(JSON.parse(s.text).size);
+                    core.warning(`Resuming chunk upload at offset ${offset}`);
+                    continue;
+                  }
+                }
+                throw new Error(`chunk upload failed (HTTP ${r.status}): ${r.text}`);
+              }
+              uploadResp = await api('PUT',
+                `${artifactUrl}?kind=archive&upload_session=${sessionId}&upload_sha256=${sha256}`,
+                undefined, { 'X-Artifact-Filename': dmgName });
+            }
+            if (uploadResp.status !== 201) throw new Error(`artifact upload failed (HTTP ${uploadResp.status}): ${uploadResp.text}`);
+
+            const pubResp = await api('POST', `/api/v1/projects/${project}/releases/${version}/publish`);
+            if (pubResp.status !== 200) throw new Error(`publish failed (HTTP ${pubResp.status}): ${pubResp.text}`);
+            core.info(`Published. Download: curl -fL -o '${dmgName}' 'https://dl.pazer.build/${project}?branch=${encodeURIComponent(branch)}&os=${targetOs}&arch=${targetArch}'`);
+
+      - name: Disk usage
+        if: always()
+        run: |
+          df -h
+          sysctl vm.swapusage
