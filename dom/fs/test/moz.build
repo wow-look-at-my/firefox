@@ -8,6 +8,8 @@ TEST_DIRS += [
     "xpcshell",
 ]
 
+BROWSER_CHROME_MANIFESTS += ["browser/browser.toml"]
+
 MOCHITEST_MANIFESTS += [
     "mochitest/mochitest-private.toml",
     "mochitest/mochitest.toml",

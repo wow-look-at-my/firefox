@@ -411,6 +411,18 @@ nsBaseFilePicker::SetAddToRecentDocs(bool aFlag) {
 }
 
 NS_IMETHODIMP
+nsBaseFilePicker::GetRawPathResults(bool* aFlag) {
+  *aFlag = mRawPathResults;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsBaseFilePicker::SetRawPathResults(bool aFlag) {
+  mRawPathResults = aFlag;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsBaseFilePicker::GetMode(nsIFilePicker::Mode* aMode) {
   *aMode = mMode;
   return NS_OK;

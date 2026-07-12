@@ -962,3 +962,13 @@ partial interface Window {
   [SameObject, SecureContext, Pref="dom.documentpip.enabled"]
   readonly attribute DocumentPictureInPicture documentPictureInPicture;
 };
+
+// https://wicg.github.io/file-system-access/#local-filesystem
+partial interface Window {
+  [SecureContext, Pref="dom.fs.local.enabled", NewObject]
+  Promise<sequence<FileSystemFileHandle>> showOpenFilePicker(optional OpenFilePickerOptions options = {});
+  [SecureContext, Pref="dom.fs.local.enabled", NewObject]
+  Promise<FileSystemFileHandle> showSaveFilePicker(optional SaveFilePickerOptions options = {});
+  [SecureContext, Pref="dom.fs.local.enabled", NewObject]
+  Promise<FileSystemDirectoryHandle> showDirectoryPicker(optional DirectoryPickerOptions options = {});
+};

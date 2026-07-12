@@ -72,12 +72,8 @@ void FileSystemWritableFileStreamParent::Close(bool aAbort) {
 
   mClosed.Flip();
 
-  if (mIsExclusive) {
-    mManager->DataManagerStrongRef()->UnlockExclusive(mEntryId);
-  } else {
-    mManager->DataManagerStrongRef()->UnlockShared(mEntryId, mTemporaryFileId,
-                                                   aAbort);
-  }
+  mManager->OnWritableStreamClosed(mEntryId, mTemporaryFileId, mIsExclusive,
+                                   aAbort);
 }
 
 }  // namespace mozilla::dom

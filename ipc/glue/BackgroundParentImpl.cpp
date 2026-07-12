@@ -462,7 +462,7 @@ BackgroundParentImpl::AllocPBackgroundSessionStorageServiceParent() {
 
 mozilla::ipc::IPCResult BackgroundParentImpl::RecvCreateFileSystemManagerParent(
     const PrincipalInfo& aPrincipalInfo,
-    Endpoint<PFileSystemManagerParent>&& aParentEndpoint,
+    Endpoint<PFileSystemManagerParent>&& aParentEndpoint, const bool& aLocal,
     CreateFileSystemManagerParentResolver&& aResolver) {
   AssertIsInMainProcess();
   AssertIsOnBackgroundThread();
@@ -479,7 +479,8 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvCreateFileSystemManagerParent(
   }
 
   return mozilla::dom::CreateFileSystemManagerParent(
-      this, aPrincipalInfo, std::move(aParentEndpoint), std::move(aResolver));
+      this, aPrincipalInfo, std::move(aParentEndpoint), aLocal,
+      std::move(aResolver));
 }
 
 mozilla::ipc::IPCResult BackgroundParentImpl::RecvCreateWebTransportParent(

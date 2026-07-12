@@ -1,0 +1,131 @@
+<!--
+  Any copyright is dedicated to the Public Domain.
+  http://creativecommons.org/publicdomain/zero/1.0/
+-->
+<html>
+<head>
+  <title>Local File System Access directory iteration test</title>
+
+  <script src="/tests/SimpleTest/SimpleTest.js"></script>
+  <script src="localFileSystemAccess_helpers.js"></script>
+  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
+
+  <script type="text/javascript">
+    SimpleTest.requestLongerTimeout(2);
+
+    add_task(async function init() {
+      await setupLocalFileSystemAccessTest();
+    });
+
+    add_task(async function test_iteration_protocols() {
+      const dirPath = joinPath(baseDir, "iterdir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "a.txt"), "a");
+      await csWrite(joinPath(dirPath, "b.bin"), "b");
+      await csWrite(joinPath(dirPath, "c.txt"), "c");
+      await csMakeDir(joinPath(dirPath, "sub1"));
+      await csMakeDir(joinPath(dirPath, "sub2"));
+
+      const dir = await pickDirectory(dirPath);
+
+      const expectedKinds = new Map([
+        ["a.txt", "file"],
+        ["b.bin", "file"],
+        ["c.txt", "file"],
+        ["sub1", "directory"],
+        ["sub2", "directory"],
+      ]);
+
+      const entryNames = [];
+      for await (const [name, handle] of dir.entries()) {
+        entryNames.push(name);
+        is(handle.name, name, `entries(): key matches handle name (${name})`);
+        is(handle.kind, expectedKinds.get(name),
+           `entries(): kind for ${name}`);
+      }
+      isDeeply(entryNames.sort(), [...expectedKinds.keys()].sort(),
+               "entries() lists exactly the directory children");
+
+      const keyNames = [];
+      for await (const name of dir.keys()) {
+        keyNames.push(name);
+      }
+      isDeeply(keyNames.sort(), [...expectedKinds.keys()].sort(),
+               "keys() lists exactly the directory children");
+
+      const valueNames = [];
+      for await (const handle of dir.values()) {
+        valueNames.push(handle.name);
+        is(handle.kind, expectedKinds.get(handle.name),
+           `values(): kind for ${handle.name}`);
+      }
+      isDeeply(valueNames.sort(), [...expectedKinds.keys()].sort(),
+               "values() lists exactly the directory children");
+    });
+
+    add_task(async function test_iterated_handles_are_live() {
+      const dirPath = joinPath(baseDir, "livedir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "inner.txt"), "live content");
+
+      const dir = await pickDirectory(dirPath);
+
+      let fileHandle = null;
+      for await (const handle of dir.values()) {
+        if (handle.name === "inner.txt") {
+          fileHandle = handle;
+        }
+      }
+      ok(fileHandle, "found the iterated file handle");
+      is(await (await fileHandle.getFile()).text(), "live content",
+         "iterated handle reads the real file");
+
+      isDeeply(await dir.resolve(fileHandle), ["inner.txt"],
+               "iterated handle resolves against the picked directory");
+    });
+
+    add_task(async function test_iteration_of_missing_directory() {
+      const dirPath = joinPath(baseDir, "soon-gone-dir");
+      await csMakeDir(dirPath);
+
+      const dir = await pickDirectory(dirPath);
+      await csRemove(dirPath);
+
+      let error = null;
+      try {
+        // eslint-disable-next-line no-unused-vars
+        for await (const name of dir.keys()) {
+          void name;
+        }
+      } catch (e) {
+        error = e;
+      }
+      is(error && error.name, "NotFoundError",
+         "iterating a deleted directory rejects with NotFoundError");
+    });
+
+    add_task(async function test_large_directory_page_boundary() {
+      const dirPath = joinPath(baseDir, "bigdir");
+      const count = 1500;
+      await csMakeManyFiles(dirPath, count);
+
+      const dir = await pickDirectory(dirPath);
+
+      const seen = new Set();
+      let total = 0;
+      for await (const [name, handle] of dir.entries()) {
+        ++total;
+        seen.add(name);
+        if (handle.kind !== "file") {
+          ok(false, `unexpected non-file entry ${name}`);
+        }
+      }
+      is(total, count, "iteration crossed the 1024-entry page boundary");
+      is(seen.size, count, "no duplicate entries across pages");
+    });
+  </script>
+</head>
+
+<body></body>
+
+</html>

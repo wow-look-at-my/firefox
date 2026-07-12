@@ -1,0 +1,275 @@
+<!--
+  Any copyright is dedicated to the Public Domain.
+  http://creativecommons.org/publicdomain/zero/1.0/
+-->
+<html>
+<head>
+  <title>Local File System Access handle operations test</title>
+
+  <script src="/tests/SimpleTest/SimpleTest.js"></script>
+  <script src="localFileSystemAccess_helpers.js"></script>
+  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
+
+  <script type="text/javascript">
+    add_task(async function init() {
+      await setupLocalFileSystemAccessTest();
+    });
+
+    add_task(async function test_open_multiple() {
+      const pathA = joinPath(baseDir, "multi-a.txt");
+      const pathB = joinPath(baseDir, "multi-b.txt");
+      await csWrite(pathA, "content a");
+      await csWrite(pathB, "content b");
+
+      const handles = await pickFiles([pathA, pathB]);
+      is(handles.length, 2, "multiple pick returns two handles");
+      is(handles[0].kind, "file", "first handle is a file");
+      is(handles[0].name, "multi-a.txt", "first handle name");
+      is(handles[1].name, "multi-b.txt", "second handle name");
+
+      is(await (await handles[0].getFile()).text(), "content a",
+         "first handle content");
+      is(await (await handles[1].getFile()).text(), "content b",
+         "second handle content");
+
+      ok(await handles[0].isSameEntry(handles[0]),
+         "isSameEntry is true for the same pick");
+      ok(!(await handles[0].isSameEntry(handles[1])),
+         "isSameEntry is false for different files");
+    });
+
+    add_task(async function test_getfile_properties_and_polling() {
+      const path = joinPath(baseDir, "poll.txt");
+      await csWrite(path, "version one");
+      await csSetMtime(path, Date.now() - 60000);
+
+      const handle = await pickFile(path);
+
+      const first = await handle.getFile();
+      is(first.name, "poll.txt", "File name matches");
+      is(first.type, "text/plain", "content type guessed from extension");
+      is(await first.text(), "version one", "initial content");
+      is(first.size, "version one".length, "initial size");
+
+      // Rewrite the real file out-of-band; a fresh getFile() must observe it.
+      await csWrite(path, "the second version");
+
+      const second = await handle.getFile();
+      is(await second.text(), "the second version",
+         "getFile reflects out-of-band modification");
+      is(second.size, "the second version".length, "size updated");
+      ok(second.lastModified > first.lastModified,
+         `lastModified moved forward (${first.lastModified} -> ` +
+         `${second.lastModified})`);
+    });
+
+    add_task(async function test_getfile_missing_rejects() {
+      const path = joinPath(baseDir, "vanishing.txt");
+      await csWrite(path, "soon gone");
+
+      const handle = await pickFile(path);
+      await csRemove(path);
+
+      await rejectsWith(handle.getFile(), "NotFoundError",
+                        "getFile on an out-of-band deleted file");
+    });
+
+    add_task(async function test_get_handles_create_semantics() {
+      const dirPath = joinPath(baseDir, "handles");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "existing.txt"), "data");
+      await csMakeDir(joinPath(dirPath, "existingdir"));
+
+      const dir = await pickDirectory(dirPath);
+
+      await rejectsWith(dir.getFileHandle("nope.txt"), "NotFoundError",
+                        "getFileHandle create:false on missing file");
+      await rejectsWith(dir.getDirectoryHandle("nopedir"), "NotFoundError",
+                        "getDirectoryHandle create:false on missing dir");
+
+      const created = await dir.getFileHandle("made.txt", { create: true });
+      is(created.kind, "file", "created file handle kind");
+      const createdStat = await csStat(joinPath(dirPath, "made.txt"));
+      ok(createdStat.exists && !createdStat.isDirectory,
+         "file created on disk");
+      is(createdStat.size, 0, "created file is empty");
+
+      const createdDir = await dir.getDirectoryHandle("madedir",
+                                                      { create: true });
+      is(createdDir.kind, "directory", "created directory handle kind");
+      const createdDirStat = await csStat(joinPath(dirPath, "madedir"));
+      ok(createdDirStat.exists && createdDirStat.isDirectory,
+         "directory created on disk");
+
+      const existing = await dir.getFileHandle("existing.txt");
+      is(await (await existing.getFile()).text(), "data",
+         "existing file opened without create");
+
+      await rejectsWith(dir.getDirectoryHandle("existing.txt"),
+                        "TypeMismatchError",
+                        "getDirectoryHandle on a file");
+      await rejectsWith(dir.getFileHandle("existingdir"),
+                        "TypeMismatchError",
+                        "getFileHandle on a directory");
+      await rejectsWith(
+        dir.getDirectoryHandle("existing.txt", { create: true }),
+        "TypeMismatchError",
+        "getDirectoryHandle(create) on a file");
+
+      await rejectsWith(dir.getFileHandle("bad/name.txt"), "TypeError",
+                        "getFileHandle with a separator in the name");
+      await rejectsWith(dir.getFileHandle(".."), "TypeError",
+                        "getFileHandle with a parent reference");
+    });
+
+    add_task(async function test_remove_entry() {
+      const dirPath = joinPath(baseDir, "removal");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "gone.txt"), "x");
+      await csMakeDir(joinPath(dirPath, "emptydir"));
+      await csMakeDir(joinPath(dirPath, "fulldir"));
+      await csWrite(joinPath(dirPath, "fulldir", "inner.txt"), "y");
+
+      const dir = await pickDirectory(dirPath);
+
+      await dir.removeEntry("gone.txt");
+      ok(!(await csStat(joinPath(dirPath, "gone.txt"))).exists,
+         "file removed from disk");
+
+      await dir.removeEntry("emptydir");
+      ok(!(await csStat(joinPath(dirPath, "emptydir"))).exists,
+         "empty directory removed without recursive");
+
+      await rejectsWith(dir.removeEntry("fulldir"),
+                        "InvalidModificationError",
+                        "non-recursive removeEntry on a non-empty directory");
+      ok((await csStat(joinPath(dirPath, "fulldir"))).exists,
+         "non-empty directory survived the failed removal");
+
+      await dir.removeEntry("fulldir", { recursive: true });
+      ok(!(await csStat(joinPath(dirPath, "fulldir"))).exists,
+         "recursive removeEntry removed the tree");
+
+      await rejectsWith(dir.removeEntry("gone.txt"), "NotFoundError",
+                        "removeEntry on a missing entry");
+    });
+
+    add_task(async function test_resolve() {
+      const dirPath = joinPath(baseDir, "resolveroot");
+      await csMakeDir(dirPath);
+      await csMakeDir(joinPath(dirPath, "sub"));
+      await csWrite(joinPath(dirPath, "sub", "leaf.txt"), "leaf");
+      await csWrite(joinPath(baseDir, "outsider.txt"), "outside");
+
+      const root = await pickDirectory(dirPath);
+      const sub = await root.getDirectoryHandle("sub");
+      const leaf = await sub.getFileHandle("leaf.txt");
+      const outsider = await pickFile(joinPath(baseDir, "outsider.txt"));
+
+      isDeeply(await root.resolve(root), [], "resolve(self) is empty path");
+      isDeeply(await root.resolve(sub), ["sub"], "resolve direct child");
+      isDeeply(await root.resolve(leaf), ["sub", "leaf.txt"],
+               "resolve nested descendant");
+      is(await root.resolve(outsider), null,
+         "resolve non-descendant is null");
+      is(await sub.resolve(root), null, "resolve ancestor is null");
+    });
+
+    add_task(async function test_resolve_from_filesystem_root() {
+      const sep = baseDir.includes("\\") ? "\\" : "/";
+      const rootPath = sep === "/"
+        ? "/"
+        : baseDir.slice(0, baseDir.indexOf(sep) + 1);
+
+      const filePath = joinPath(baseDir, "resolve-from-root.txt");
+      await csWrite(filePath, "root resolve");
+
+      const rootDir = await pickDirectory(rootPath);
+      is(rootDir.kind, "directory", "the filesystem root can be picked");
+
+      const file = await pickFile(filePath);
+
+      const expected = filePath.slice(rootPath.length).split(sep);
+      isDeeply(await rootDir.resolve(file), expected,
+               "resolve from the filesystem root returns the full path");
+    });
+
+    add_task(async function test_create_through_file_parent() {
+      const dirPath = joinPath(baseDir, "becomes-a-file");
+      await csMakeDir(dirPath);
+
+      const dir = await pickDirectory(dirPath);
+
+      await csRemove(dirPath);
+      await csWrite(dirPath, "now a plain file");
+
+      await rejectsWith(dir.getFileHandle("child.txt", { create: true }),
+                        "TypeMismatchError",
+                        "creating through a parent that is now a file");
+    });
+
+    add_task(async function test_move_and_rename() {
+      const dirPath = joinPath(baseDir, "moving");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "orig.txt"), "move me");
+      await csMakeDir(joinPath(dirPath, "dest"));
+
+      const dir = await pickDirectory(dirPath);
+      const file = await dir.getFileHandle("orig.txt");
+
+      await file.move("renamed.txt");
+      is(file.name, "renamed.txt", "handle name updated by rename");
+      ok(!(await csStat(joinPath(dirPath, "orig.txt"))).exists,
+         "old name gone from disk");
+      is(await csRead(joinPath(dirPath, "renamed.txt")), "move me",
+         "renamed file kept its content");
+
+      const dest = await dir.getDirectoryHandle("dest");
+      await file.move(dest);
+      is(file.name, "renamed.txt", "name preserved when moving to a dir");
+      is(await csRead(joinPath(dirPath, "dest", "renamed.txt")), "move me",
+         "file moved into the destination directory");
+
+      await file.move(dir, "moved-back.txt");
+      is(file.name, "moved-back.txt", "move(parent, name) renames too");
+      is(await csRead(joinPath(dirPath, "moved-back.txt")), "move me",
+         "file moved back with a new name");
+
+      is(await (await file.getFile()).text(), "move me",
+         "handle still reads the file after moves");
+
+      // File over file replaces the destination.
+      await csWrite(joinPath(dirPath, "victim.txt"), "old content");
+      await file.move("victim.txt");
+      is(await csRead(joinPath(dirPath, "victim.txt")), "move me",
+         "moving over an existing file replaces it");
+
+      // Directory over an existing entry is an invalid modification.
+      await csMakeDir(joinPath(dirPath, "dirsource"));
+      const dirSource = await dir.getDirectoryHandle("dirsource");
+      await csWrite(joinPath(dirPath, "blocker.txt"), "in the way");
+      await rejectsWith(dirSource.move("blocker.txt"),
+                        "InvalidModificationError",
+                        "moving a directory over an existing file");
+
+      // Moving a directory into its own subtree is rejected.
+      await csMakeDir(joinPath(dirPath, "dirsource", "inner"));
+      const inner = await dirSource.getDirectoryHandle("inner");
+      await rejectsWith(dirSource.move(inner),
+                        "InvalidModificationError",
+                        "moving a directory into its own descendant");
+
+      await rejectsWith(file.move("bad/name"), "TypeError",
+                        "move with a separator in the new name");
+
+      const missingSourcePath = joinPath(dirPath, "victim.txt");
+      await csRemove(missingSourcePath);
+      await rejectsWith(file.move("anywhere.txt"), "NotFoundError",
+                        "move with a missing source");
+    });
+  </script>
+</head>
+
+<body></body>
+
+</html>

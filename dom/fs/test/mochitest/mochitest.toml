@@ -11,6 +11,8 @@ skip-if = [
 support-files = [
   "head.js",
   "bucketFS_getDirectory.html",
+  "localFileSystemAccess_helpers.js",
+  "script_localFileSystemAccess.js",
 ]
 
 # Skip all tests if xorigin since we'll fail GetStorage() with ePartitionForeignOrDeny
@@ -37,6 +39,36 @@ scheme = "https"
 
 ["test_iframes.html"]
 scheme = "https"
+
+["test_localFileSystemAccess_directory.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
+
+["test_localFileSystemAccess_ops.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
+
+["test_localFileSystemAccess_persistence.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
+
+["test_localFileSystemAccess_picker.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
+
+["test_localFileSystemAccess_writable.html"]
+scheme = "https"
+skip-if = [
+  "os == 'android'", # dom.fs.local.enabled is desktop-only
+]
 
 ["test_syncAccessHandle_worker.html"]
 scheme = "https"

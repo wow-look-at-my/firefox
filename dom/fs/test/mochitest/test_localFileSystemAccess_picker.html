@@ -1,0 +1,145 @@
+<!--
+  Any copyright is dedicated to the Public Domain.
+  http://creativecommons.org/publicdomain/zero/1.0/
+-->
+<html>
+<head>
+  <title>Local File System Access picker test</title>
+
+  <script src="/tests/SimpleTest/SimpleTest.js"></script>
+  <script src="localFileSystemAccess_helpers.js"></script>
+  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
+
+  <script type="text/javascript">
+    add_task(async function init() {
+      ok("showOpenFilePicker" in window, "showOpenFilePicker exists");
+      ok("showSaveFilePicker" in window, "showSaveFilePicker exists");
+      ok("showDirectoryPicker" in window, "showDirectoryPicker exists");
+
+      await setupLocalFileSystemAccessTest();
+    });
+
+    add_task(async function test_no_activation_rejects() {
+      await rejectsWith(window.showOpenFilePicker(), "SecurityError",
+                        "open picker without user activation");
+      await rejectsWith(window.showSaveFilePicker(), "SecurityError",
+                        "save picker without user activation");
+      await rejectsWith(window.showDirectoryPicker(), "SecurityError",
+                        "directory picker without user activation");
+    });
+
+    add_task(async function test_cancel_rejects_abort() {
+      const path = joinPath(baseDir, "cancelme.txt");
+      await csWrite(path, "cancel");
+
+      MockFilePicker.setFiles([path]);
+      MockFilePicker.returnValue = MockFilePicker.returnCancel;
+
+      armActivation();
+      await rejectsWith(window.showOpenFilePicker(), "AbortError",
+                        "canceled open picker");
+    });
+
+    add_task(async function test_open_file_picker() {
+      const path = joinPath(baseDir, "opened.txt");
+      await csWrite(path, "picker smoke content");
+
+      const handle = await pickFile(path);
+      is(handle.kind, "file", "open picker returns a file handle");
+      is(handle.name, "opened.txt", "handle name matches picked file");
+
+      const file = await handle.getFile();
+      is(await file.text(), "picker smoke content",
+         "getFile reads the real file content");
+
+      // A successful pick performs the activation notification steps, so a
+      // chained picker call works without a new gesture (Chromium parity).
+      const chained = await window.showOpenFilePicker();
+      is(chained.length, 1, "successful pick re-arms user activation");
+    });
+
+    add_task(async function test_save_file_picker() {
+      const path = joinPath(baseDir, "saved.txt");
+      await csWrite(path, "existing save content");
+
+      const handle = await pickSaveFile(path, { suggestedName: "saved.txt" });
+      is(handle.kind, "file", "save picker returns a file handle");
+      is(handle.name, "saved.txt", "handle name matches picked file");
+
+      // WICG spec: the existing file is cleared before the method returns.
+      is(await csRead(path), "",
+         "save pick truncates an existing file to 0 bytes");
+      is((await handle.getFile()).size, 0,
+         "getFile after a save pick sees the cleared file");
+    });
+
+    add_task(async function test_directory_picker() {
+      const dirPath = joinPath(baseDir, "pickeddir");
+      await csMakeDir(dirPath);
+      await csWrite(joinPath(dirPath, "seed.txt"), "seed");
+
+      const handle = await pickDirectory(dirPath);
+      is(handle.kind, "directory",
+         "directory picker returns a directory handle");
+      is(handle.name, "pickeddir", "handle name matches picked directory");
+
+      const names = [];
+      for await (const name of handle.keys()) {
+        names.push(name);
+      }
+      ok(names.includes("seed.txt"), "iteration sees the seeded child");
+
+      const subFile = await handle.getFileHandle("sub.txt", { create: true });
+      is(subFile.kind, "file", "getFileHandle(create) resolves a file handle");
+      const subStat = await csStat(joinPath(dirPath, "sub.txt"));
+      ok(subStat.exists, "getFileHandle(create) created the file on disk");
+
+      await rejectsWith(handle.getDirectoryHandle("missing"), "NotFoundError",
+                        "getDirectoryHandle for a missing entry");
+    });
+
+    add_task(async function test_local_handle_clones() {
+      const path = joinPath(baseDir, "cloneme.txt");
+      await csWrite(path, "clone");
+
+      const handle = await pickFile(path);
+
+      const clone = structuredClone(handle);
+      ok(await clone.isSameEntry(handle),
+         "local handles support structured cloning");
+      is(await (await clone.getFile()).text(), "clone",
+         "cloned local handle reads from disk");
+    });
+
+    add_task(async function test_invalid_accept_types_reject() {
+      const path = joinPath(baseDir, "after-typeerror.txt");
+      await csWrite(path, "still armed");
+      MockFilePicker.setFiles([path]);
+      MockFilePicker.returnValue = MockFilePicker.returnOK;
+
+      armActivation();
+
+      await rejectsWith(
+        window.showOpenFilePicker({
+          types: [{ accept: { "text/plain": ["txt"] } }],
+        }),
+        "TypeError",
+        "accept extension without a leading dot");
+      await rejectsWith(
+        window.showSaveFilePicker({ excludeAcceptAllOption: true }),
+        "TypeError",
+        "excludeAcceptAllOption without accept types");
+
+      // The TypeErrors are thrown before activation is consumed, so a valid
+      // pick still works without re-arming the gesture.
+      const handles = await window.showOpenFilePicker({
+        types: [{ description: "Text", accept: { "text/plain": [".txt"] } }],
+      });
+      is(handles.length, 1, "TypeError paths do not consume user activation");
+    });
+  </script>
+</head>
+
+<body></body>
+
+</html>

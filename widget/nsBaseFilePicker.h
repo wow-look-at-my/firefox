@@ -44,6 +44,8 @@ class nsBaseFilePicker : public nsIFilePicker {
       const nsAString& aDisplayDirectory) override;
   NS_IMETHOD GetAddToRecentDocs(bool* aFlag) override;
   NS_IMETHOD SetAddToRecentDocs(bool aFlag) override;
+  NS_IMETHOD GetRawPathResults(bool* aFlag) override;
+  NS_IMETHOD SetRawPathResults(bool aFlag) override;
   NS_IMETHOD GetMode(nsIFilePicker::Mode* aMode) override;
   NS_IMETHOD SetOkButtonLabel(const nsAString& aLabel) override;
   NS_IMETHOD GetOkButtonLabel(nsAString& aLabel) override;
@@ -65,6 +67,7 @@ class nsBaseFilePicker : public nsIFilePicker {
   bool MaybeBlockFilePicker(nsIFilePickerShownCallback* aCallback);
 
   bool mAddToRecentDocs = true;
+  bool mRawPathResults = false;
   nsCOMPtr<nsIFile> mDisplayDirectory;
   nsString mDisplaySpecialDirectory;
 

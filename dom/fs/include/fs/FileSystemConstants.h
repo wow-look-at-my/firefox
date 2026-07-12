@@ -15,6 +15,12 @@ constexpr nsLiteralString kRootString = u"root"_ns;
 
 constexpr uint32_t kStreamCopyBlockSize = 1024 * 1024;
 
+// Structured-clone payload kind flag marking handles backed by the local
+// (real path) file system; the remaining bits hold FileSystemHandleKind.
+constexpr uint32_t kLocalFileSystemHandleKindFlag = 0x80000000u;
+
+constexpr uint32_t kLocalEntryIdMaxLength = 65536u;
+
 }  // namespace mozilla::dom::fs
 
 #endif  // DOM_FS_FILESYSTEMCONSTANTS_H_

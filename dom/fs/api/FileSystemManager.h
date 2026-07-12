@@ -52,15 +52,19 @@ class FileSystemManager : public nsISupports {
 
   FileSystemManager(
       nsIGlobalObject* aGlobal, RefPtr<StorageManager> aStorageManager,
-      RefPtr<FileSystemBackgroundRequestHandler> aBackgroundRequestHandler);
+      RefPtr<FileSystemBackgroundRequestHandler> aBackgroundRequestHandler,
+      bool aLocal = false);
 
   FileSystemManager(nsIGlobalObject* aGlobal,
-                    RefPtr<StorageManager> aStorageManager);
+                    RefPtr<StorageManager> aStorageManager,
+                    bool aLocal = false);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(FileSystemManager)
 
   bool IsShutdown() const { return mShutdown; }
+
+  bool IsLocal() const { return mLocal; }
 
   void Shutdown();
 
@@ -90,6 +94,8 @@ class FileSystemManager : public nsISupports {
 
   nsTObserverArray<PromiseRequestHolder<FileSystemManagerChild::ActorPromise>*>
       mPromiseRequestHolders;
+
+  const bool mLocal;
 
   FlippedOnce<false> mShutdown;
 };

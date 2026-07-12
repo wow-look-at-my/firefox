@@ -31,6 +31,17 @@ plugins {
 // is launched from within IntelliJ.
 ext.topsrcdir = rootProject.projectDir.absolutePath
 
+// GitHub automatic dependency submission runs without a mach objdir (see
+// mobile/android/gradle/mozconfig.gradle). Expose an empty build so the
+// dependency snapshot can still be generated.
+if (gradle.mozconfig.dependency_submission_stub) {
+    def stubProjectDir = new File(topsrcdir, ".gradle/github-dependency-submission-project")
+    stubProjectDir.mkdirs()
+    rootProject.name = 'firefox'
+    rootProject.projectDir = stubProjectDir
+    return
+}
+
 apply from: "${topsrcdir}/mobile/android/shared-settings.gradle"
 
 if (gradle.ext.mozconfig.substs.MOZ_APPSERVICES_IN_TREE) {

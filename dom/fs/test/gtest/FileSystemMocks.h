@@ -67,7 +67,7 @@ class MockFileSystemRequestHandler : public FileSystemRequestHandler {
   MOCK_METHOD(void, GetFileHandle,
               (RefPtr<FileSystemManager> & aManager,
                const FileSystemChildMetadata& aFile, bool aCreate,
-               RefPtr<Promise> aPromise, ErrorResult& aError),
+               bool aTruncate, RefPtr<Promise> aPromise, ErrorResult& aError),
               (override));
 
   MOCK_METHOD(void, GetFile,

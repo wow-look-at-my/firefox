@@ -5317,6 +5317,13 @@
   value: true
   mirror: always
 
+# Whether the local (non-OPFS) File System Access API surface is enabled,
+# i.e. window.showOpenFilePicker and friends operating on real OS paths.
+- name: dom.fs.local.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NOT_ANDROID@
+  mirror: always
+
 # Whether the WritableFileStream is enabled or disabled.
 - name: dom.fs.writable_file_stream.enabled
   type: RelaxedAtomicBool

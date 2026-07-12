@@ -10,6 +10,7 @@ EXPORTS.mozilla.dom += [
     "FileSystemManager.h",
     "FileSystemSyncAccessHandle.h",
     "FileSystemWritableFileStream.h",
+    "LocalFileSystemAccessHandler.h",
 ]
 
 UNIFIED_SOURCES += [
@@ -20,9 +21,11 @@ UNIFIED_SOURCES += [
     "FileSystemManager.cpp",
     "FileSystemSyncAccessHandle.cpp",
     "FileSystemWritableFileStream.cpp",
+    "LocalFileSystemAccessHandler.cpp",
 ]
 
 LOCAL_INCLUDES += [
+    "/dom/base",
     "/dom/fs/child",
     "/dom/fs/include",
     "/netwerk/base",

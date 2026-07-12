@@ -114,8 +114,8 @@ TEST_F(TestFileSystemDirectoryHandle, isHandleKindDirectory) {
 }
 
 TEST_F(TestFileSystemDirectoryHandle, isFileHandleReturned) {
-  EXPECT_CALL(*mRequestHandler, GetFileHandle(_, _, _, _, _))
-      .WillOnce(::testing::ReturnArg<3>());
+  EXPECT_CALL(*mRequestHandler, GetFileHandle(_, _, _, _, _, _))
+      .WillOnce(::testing::ReturnArg<4>());
   RefPtr<FileSystemDirectoryHandle> dirHandle =
       MakeAndAddRef<FileSystemDirectoryHandle>(mGlobal, mManager, mMetadata,
                                                mRequestHandler.release());

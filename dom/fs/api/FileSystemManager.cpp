@@ -18,16 +18,20 @@ namespace mozilla::dom {
 
 FileSystemManager::FileSystemManager(
     nsIGlobalObject* aGlobal, RefPtr<StorageManager> aStorageManager,
-    RefPtr<FileSystemBackgroundRequestHandler> aBackgroundRequestHandler)
+    RefPtr<FileSystemBackgroundRequestHandler> aBackgroundRequestHandler,
+    bool aLocal)
     : mGlobal(aGlobal),
       mStorageManager(std::move(aStorageManager)),
       mBackgroundRequestHandler(std::move(aBackgroundRequestHandler)),
-      mRequestHandler(new fs::FileSystemRequestHandler()) {}
+      mRequestHandler(new fs::FileSystemRequestHandler()),
+      mLocal(aLocal) {}
 
 FileSystemManager::FileSystemManager(nsIGlobalObject* aGlobal,
-                                     RefPtr<StorageManager> aStorageManager)
+                                     RefPtr<StorageManager> aStorageManager,
+                                     bool aLocal)
     : FileSystemManager(aGlobal, std::move(aStorageManager),
-                        MakeRefPtr<FileSystemBackgroundRequestHandler>()) {}
+                        MakeRefPtr<FileSystemBackgroundRequestHandler>(),
+                        aLocal) {}
 
 FileSystemManager::~FileSystemManager() { MOZ_ASSERT(mShutdown); }
 
@@ -97,26 +101,31 @@ void FileSystemManager::BeginRequest(
 
   MOZ_ASSERT(mGlobal);
 
-  nsICookieJarSettings* cookieJarSettings = mGlobal->GetCookieJarSettings();
-  nsIPrincipal* unpartitionedPrincipal = mGlobal->PrincipalOrNull();
-  if (NS_WARN_IF(!cookieJarSettings) || NS_WARN_IF(!unpartitionedPrincipal) ||
-      NS_WARN_IF(unpartitionedPrincipal->GetIsInPrivateBrowsing())) {
-    // ePartition values can be returned for Private Browsing Mode
-    // for third-party iframes, so we also need to check the private browsing
-    // in that case which means we need to check the principal.
-    aFailure(NS_ERROR_DOM_SECURITY_ERR);
-    return;
-  }
+  // The local file system is not origin storage: it is gated on the OS file
+  // picker alone, so the storage gates (including the private browsing one)
+  // only apply to OPFS.
+  if (!mLocal) {
+    nsICookieJarSettings* cookieJarSettings = mGlobal->GetCookieJarSettings();
+    nsIPrincipal* unpartitionedPrincipal = mGlobal->PrincipalOrNull();
+    if (NS_WARN_IF(!cookieJarSettings) || NS_WARN_IF(!unpartitionedPrincipal) ||
+        NS_WARN_IF(unpartitionedPrincipal->GetIsInPrivateBrowsing())) {
+      // ePartition values can be returned for Private Browsing Mode
+      // for third-party iframes, so we also need to check the private browsing
+      // in that case which means we need to check the principal.
+      aFailure(NS_ERROR_DOM_SECURITY_ERR);
+      return;
+    }
 
-  // Check if we're allowed to use storage.
-  StorageAccess access = mGlobal->GetStorageAccess();
+    // Check if we're allowed to use storage.
+    StorageAccess access = mGlobal->GetStorageAccess();
 
-  // Use allow list to decide the permission.
-  const bool allowed = access == StorageAccess::eAllow ||
-                       StoragePartitioningEnabled(access, cookieJarSettings);
-  if (NS_WARN_IF(!allowed)) {
-    aFailure(NS_ERROR_DOM_SECURITY_ERR);
-    return;
+    // Use allow list to decide the permission.
+    const bool allowed = access == StorageAccess::eAllow ||
+                         StoragePartitioningEnabled(access, cookieJarSettings);
+    if (NS_WARN_IF(!allowed)) {
+      aFailure(NS_ERROR_DOM_SECURITY_ERR);
+      return;
+    }
   }
 
   if (mBackgroundRequestHandler->FileSystemManagerChildStrongRef()) {
@@ -131,7 +140,7 @@ void FileSystemManager::BeginRequest(
   QM_TRY_INSPECT(const auto& principalInfo, mGlobal->GetStorageKey(), QM_VOID,
                  [&aFailure](nsresult rv) { aFailure(rv); });
 
-  mBackgroundRequestHandler->CreateFileSystemManagerChild(principalInfo)
+  mBackgroundRequestHandler->CreateFileSystemManagerChild(principalInfo, mLocal)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [self = RefPtr<FileSystemManager>(this), holder,
@@ -150,6 +159,7 @@ void FileSystemManager::BeginRequest(
 }
 
 already_AddRefed<Promise> FileSystemManager::GetDirectory(ErrorResult& aError) {
+  MOZ_ASSERT(!mLocal);
   MOZ_ASSERT(mGlobal);
 
   RefPtr<Promise> promise = Promise::Create(mGlobal, aError);

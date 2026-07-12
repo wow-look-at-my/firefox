@@ -168,7 +168,8 @@ parent:
    */
   async CreateFileSystemManagerParent(
       PrincipalInfo principalInfo,
-      Endpoint<PFileSystemManagerParent> aParentEndpoint)
+      Endpoint<PFileSystemManagerParent> aParentEndpoint,
+      bool aLocal)
       returns(nsresult rv);
 
   /**

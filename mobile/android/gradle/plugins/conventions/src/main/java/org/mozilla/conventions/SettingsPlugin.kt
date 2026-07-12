@@ -26,6 +26,12 @@ class SettingsPlugin : Plugin<Settings> {
     private val logger = Logging.getLogger(SettingsPlugin::class.java)
 
     override fun apply(settings: Settings) {
+        // GitHub automatic dependency submission stub build: no projects to include.
+        val mozconfig = settings.gradle.extensions.extraProperties["mozconfig"] as Map<*, *>
+        if (mozconfig["dependency_submission_stub"] == true) {
+            return
+        }
+
         val extension = settings.extensions.create<SettingsExtension>("mozilla")
         extension.disableAndroidComponentsTasks.convention(false)
 

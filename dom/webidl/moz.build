@@ -631,6 +631,7 @@ WEBIDL_FILES = [
     "FileReader.webidl",
     "FileReaderSync.webidl",
     "FileSystem.webidl",
+    "FileSystemAccess.webidl",
     "FileSystemDirectoryEntry.webidl",
     "FileSystemDirectoryHandle.webidl",
     "FileSystemDirectoryIterator.webidl",
