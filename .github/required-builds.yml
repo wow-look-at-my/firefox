@@ -1,5 +1,0 @@
-ignore:
-  - "handle-pr"
-  - "submit-gradle"
-  - "Handle Pull Request"
-  - "Automatic Dependency Submission*"
